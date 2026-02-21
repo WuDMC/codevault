@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "echovault"
+name = "codevault"
 version = "0.1.1"
-description = "Local-first memory system for coding agents with Obsidian-native markdown storage"
+description = "Multi-user remote memory system for coding agents with PostgreSQL + pgvector backend"
 requires-python = ">=3.10"
 dependencies = [
     "click>=8.0",

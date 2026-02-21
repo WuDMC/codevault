@@ -35,8 +35,8 @@ class TestClaudeCodeSetup:
         assert mcp_path.exists()
         data = json.loads(mcp_path.read_text())
         assert "mcpServers" in data
-        assert "echovault" in data["mcpServers"]
-        mcp = data["mcpServers"]["echovault"]
+        assert "codevault" in data["mcpServers"]
+        mcp = data["mcpServers"]["codevault"]
         assert mcp["command"] == "memory"
         assert mcp["args"] == ["mcp"]
 
@@ -60,7 +60,7 @@ class TestClaudeCodeSetup:
         setup_claude_code(str(claude_home), project=True)
         setup_claude_code(str(claude_home), project=True)
         data = json.loads(_mcp_json_path(claude_home).read_text())
-        assert "echovault" in data["mcpServers"]
+        assert "codevault" in data["mcpServers"]
 
     def test_removes_old_hooks_on_setup(self, claude_home):
         from memory.setup import setup_claude_code
@@ -80,7 +80,7 @@ class TestClaudeCodeSetup:
     def test_migrates_mcp_from_settings_to_mcp_json(self, claude_home):
         from memory.setup import setup_claude_code
         old_settings = {
-            "mcpServers": {"echovault": {"command": "memory", "args": ["mcp"], "type": "stdio"}},
+            "mcpServers": {"codevault": {"command": "memory", "args": ["mcp"], "type": "stdio"}},
             "permissions": {"allow": []}
         }
         (claude_home / "settings.json").write_text(json.dumps(old_settings, indent=2))
@@ -90,11 +90,11 @@ class TestClaudeCodeSetup:
         assert "mcpServers" not in settings
         # Should be in .mcp.json
         data = json.loads(_mcp_json_path(claude_home).read_text())
-        assert "echovault" in data["mcpServers"]
+        assert "codevault" in data["mcpServers"]
 
     def test_removes_old_skill_on_setup(self, claude_home):
         from memory.setup import setup_claude_code
-        skill_dir = claude_home / "skills" / "echovault"
+        skill_dir = claude_home / "skills" / "codevault"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text("old skill")
         setup_claude_code(str(claude_home), project=True)
@@ -116,7 +116,7 @@ class TestClaudeCodeSetup:
         setup_claude_code(str(claude_home), project=False)
         assert claude_json.exists()
         data = json.loads(claude_json.read_text())
-        assert "echovault" in data["mcpServers"]
+        assert "codevault" in data["mcpServers"]
         # .mcp.json should NOT be created for global install
         assert not (tmp_path / ".mcp.json").exists()
 
@@ -152,14 +152,14 @@ class TestCursorSetup:
         assert mcp_path.exists()
         data = json.loads(mcp_path.read_text())
         assert "mcpServers" in data
-        assert "echovault" in data["mcpServers"]
+        assert "codevault" in data["mcpServers"]
 
     def test_does_not_duplicate(self, cursor_home):
         from memory.setup import setup_cursor
         setup_cursor(str(cursor_home))
         setup_cursor(str(cursor_home))
         data = json.loads((cursor_home / "mcp.json").read_text())
-        assert "echovault" in data["mcpServers"]
+        assert "codevault" in data["mcpServers"]
 
     def test_returns_success_result(self, cursor_home):
         from memory.setup import setup_cursor
@@ -218,7 +218,7 @@ class TestCodexSetup:
 
         setup_codex(str(codex_home))
 
-        skill_path = codex_home / "skills" / "echovault" / "SKILL.md"
+        skill_path = codex_home / "skills" / "codevault" / "SKILL.md"
         assert skill_path.exists()
 
     def test_returns_success_result(self, codex_home):
@@ -239,8 +239,8 @@ class TestOpenCodeSetup:
         assert path.exists()
         data = json.loads(path.read_text())
         assert "mcp" in data
-        assert "echovault" in data["mcp"]
-        cfg = data["mcp"]["echovault"]
+        assert "codevault" in data["mcp"]
+        cfg = data["mcp"]["codevault"]
         assert cfg["type"] == "local"
         assert cfg["command"] == ["memory", "mcp"]
 
@@ -260,7 +260,7 @@ class TestOpenCodeSetup:
         data = json.loads((tmp_path / "opencode.json").read_text())
         assert data["theme"] == "dark"
         assert "other-tool" in data["mcp"]
-        assert "echovault" in data["mcp"]
+        assert "codevault" in data["mcp"]
 
     def test_uninstall_removes_entry(self, tmp_path, monkeypatch):
         from memory.setup import setup_opencode, uninstall_opencode
@@ -297,7 +297,7 @@ class TestOpenCodeSetup:
         path = tmp_path / ".config" / "opencode" / "opencode.json"
         assert path.exists()
         data = json.loads(path.read_text())
-        assert "echovault" in data["mcp"]
+        assert "codevault" in data["mcp"]
 
 
 class TestCodexTomlMcp:
@@ -308,7 +308,7 @@ class TestCodexTomlMcp:
         assert toml_path.exists()
         content = toml_path.read_text()
         assert "mcp_servers" in content
-        assert "echovault" in content
+        assert "codevault" in content
         assert "memory" in content
 
     def test_setup_creates_both_agents_md_and_config_toml(self, codex_home):
@@ -324,7 +324,7 @@ class TestCodexTomlMcp:
         toml_path = codex_home / "config.toml"
         if toml_path.exists():
             content = toml_path.read_text()
-            assert "echovault" not in content
+            assert "codevault" not in content
 
     def test_toml_preserves_other_sections(self, codex_home):
         from memory.setup import _read_toml, _write_toml, _install_toml_mcp, _uninstall_toml_mcp
@@ -333,11 +333,11 @@ class TestCodexTomlMcp:
         _write_toml(toml_path, {"model": "gpt-4", "mcp_servers": {"other": {"command": "other", "args": []}}})
         _install_toml_mcp(toml_path)
         data = _read_toml(toml_path)
-        assert "echovault" in data["mcp_servers"]
+        assert "codevault" in data["mcp_servers"]
         assert "other" in data["mcp_servers"]
         _uninstall_toml_mcp(toml_path)
         data = _read_toml(toml_path)
-        assert "echovault" not in data.get("mcp_servers", {})
+        assert "codevault" not in data.get("mcp_servers", {})
         assert "other" in data["mcp_servers"]
 
 
@@ -348,15 +348,15 @@ class TestTomlRoundtrip:
         original = {
             "model": "gpt-4",
             "mcp_servers": {
-                "echovault": {"command": "memory", "args": ["mcp"]},
+                "codevault": {"command": "memory", "args": ["mcp"]},
                 "other": {"command": "other", "args": ["--flag"]},
             },
         }
         _write_toml(path, original)
         result = _read_toml(path)
         assert result["model"] == "gpt-4"
-        assert result["mcp_servers"]["echovault"]["command"] == "memory"
-        assert result["mcp_servers"]["echovault"]["args"] == ["mcp"]
+        assert result["mcp_servers"]["codevault"]["command"] == "memory"
+        assert result["mcp_servers"]["codevault"]["args"] == ["mcp"]
         assert result["mcp_servers"]["other"]["command"] == "other"
 
     def test_empty_file_returns_empty_dict(self, tmp_path):
@@ -378,7 +378,7 @@ class TestUninstall:
         mcp_path = _mcp_json_path(claude_home)
         if mcp_path.exists():
             data = json.loads(mcp_path.read_text())
-            assert "echovault" not in data.get("mcpServers", {})
+            assert "codevault" not in data.get("mcpServers", {})
 
     def test_uninstall_claude_code_removes_old_hooks(self, claude_home):
         from memory.setup import uninstall_claude_code
@@ -401,7 +401,7 @@ class TestUninstall:
         mcp_path = cursor_home / "mcp.json"
         if mcp_path.exists():
             data = json.loads(mcp_path.read_text())
-            assert "echovault" not in data.get("mcpServers", {})
+            assert "codevault" not in data.get("mcpServers", {})
         # File may be removed entirely if no other config remains
 
     def test_uninstall_codex_removes_section(self, codex_home):

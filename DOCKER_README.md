@@ -4,8 +4,8 @@
 
 ```bash
 # 1. Клонируй репозиторий
-git clone https://github.com/YOUR_USERNAME/echovault.git
-cd echovault
+git clone https://github.com/YOUR_USERNAME/codevault.git
+cd codevault
 
 # 2. Настрой environment variables
 cp .env.example .env

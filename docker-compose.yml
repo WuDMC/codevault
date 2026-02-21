@@ -1,10 +1,8 @@
-version: '3.8'
-
 services:
   # PostgreSQL — отдельный сервис
   # Может использоваться ЛЮБЫМИ приложениями, не только memory server
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg18
     container_name: memory-postgres
     restart: unless-stopped
     environment:
@@ -12,7 +10,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql
       - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     ports:
       - "5432:5432"  # Exposed — другие приложения могут подключаться!

@@ -169,7 +169,7 @@ def create_server(user_id: Optional[int] = None) -> tuple[Server, MemoryService]
         Tuple of (Server, MemoryService)
     """
     service = MemoryService(user_id=user_id)
-    server = Server("echovault")
+    server = Server("codevault")
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:

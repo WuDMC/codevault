@@ -1,6 +1,6 @@
 # EchoVault Fork: Multi-User Remote Memory
 
-This fork adapts [mraza007/echovault](https://github.com/mraza007/echovault) from **local-only SQLite** to **remote PostgreSQL + pgvector** with **multi-user support** and **SSE transport**.
+This fork adapts [mraza007/codevault](https://github.com/mraza007/codevault) from **local-only SQLite** to **remote PostgreSQL + pgvector** with **multi-user support** and **SSE transport**.
 
 ---
 
@@ -206,8 +206,8 @@ CREATE TABLE memories (
 
 **Step 1: Install fork**
 ```bash
-pip uninstall echovault
-pip install git+https://github.com/YOUR_USERNAME/echovault.git
+pip uninstall codevault
+pip install git+https://github.com/YOUR_USERNAME/codevault.git
 ```
 
 **Step 2: Keep using local SQLite (no changes needed)**
@@ -235,7 +235,7 @@ auth:
 
 ```toml
 dependencies = [
-    # ... existing echovault deps ...
+    # ... existing codevault deps ...
     "psycopg2-binary>=2.9.9",  # PostgreSQL driver
     "pgvector>=0.3.0",          # pgvector Python support
     "starlette>=0.37.0",        # SSE transport
@@ -300,7 +300,7 @@ dependencies = [
 
 ## Credits
 
-- **Original EchoVault**: [mraza007/echovault](https://github.com/mraza007/echovault)
+- **Original EchoVault**: [mraza007/codevault](https://github.com/mraza007/codevault)
 - **This fork**: Adapted for multi-user PostgreSQL + SSE by @denismironov
 
 ---

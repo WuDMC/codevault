@@ -1,5 +1,5 @@
 ---
-name: echovault
+name: codevault
 description: Local-first memory for coding agents. You MUST retrieve memories at session start and save memories before session end. This is not optional.
 ---
 

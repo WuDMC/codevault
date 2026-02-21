@@ -113,28 +113,28 @@ OPENCODE_MCP_CONFIG = {
 
 
 def _install_mcp_servers(path: str) -> bool:
-    """Install echovault into a JSON file under the ``mcpServers`` key.
+    """Install codevault into a JSON file under the ``mcpServers`` key.
 
     Used by Claude Code and Cursor.  Returns True if the entry was added.
     """
     data = _read_json(path)
     servers = data.setdefault("mcpServers", {})
-    if "echovault" in servers:
+    if "codevault" in servers:
         return False
-    servers["echovault"] = MCP_CONFIG
+    servers["codevault"] = MCP_CONFIG
     _write_json(path, data)
     return True
 
 
 def _uninstall_mcp_servers(path: str) -> bool:
-    """Remove echovault from a JSON ``mcpServers`` key.  Returns True if removed."""
+    """Remove codevault from a JSON ``mcpServers`` key.  Returns True if removed."""
     if not os.path.exists(path):
         return False
     data = _read_json(path)
     servers = data.get("mcpServers", {})
-    if "echovault" not in servers:
+    if "codevault" not in servers:
         return False
-    del servers["echovault"]
+    del servers["codevault"]
     if not servers:
         del data["mcpServers"]
     if data:
@@ -145,7 +145,7 @@ def _uninstall_mcp_servers(path: str) -> bool:
 
 
 def _install_toml_mcp(path: str) -> bool:
-    """Install echovault into a TOML ``[mcp_servers.echovault]`` table.
+    """Install codevault into a TOML ``[mcp_servers.codevault]`` table.
 
     Used by Codex.  Returns True if the entry was added.
     If the existing file can't be parsed (e.g. Codex writes non-standard
@@ -158,25 +158,25 @@ def _install_toml_mcp(path: str) -> bool:
         return _append_toml_mcp_section(path)
 
     servers = data.setdefault("mcp_servers", {})
-    if "echovault" in servers:
+    if "codevault" in servers:
         return False
-    servers["echovault"] = {"command": "memory", "args": ["mcp"]}
+    servers["codevault"] = {"command": "memory", "args": ["mcp"]}
     _write_toml(path, data)
     return True
 
 
 def _append_toml_mcp_section(path: str) -> bool:
-    """Append [mcp_servers.echovault] to a TOML file without parsing it."""
+    """Append [mcp_servers.codevault] to a TOML file without parsing it."""
     try:
         with open(path) as f:
             content = f.read()
     except FileNotFoundError:
         content = ""
 
-    if "mcp_servers.echovault" in content:
+    if "mcp_servers.codevault" in content:
         return False
 
-    section = '\n[mcp_servers.echovault]\ncommand = "memory"\nargs = ["mcp"]\n'
+    section = '\n[mcp_servers.codevault]\ncommand = "memory"\nargs = ["mcp"]\n'
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a") as f:
@@ -185,7 +185,7 @@ def _append_toml_mcp_section(path: str) -> bool:
 
 
 def _uninstall_toml_mcp(path: str) -> bool:
-    """Remove echovault from a TOML ``[mcp_servers]`` table.  Returns True if removed."""
+    """Remove codevault from a TOML ``[mcp_servers]`` table.  Returns True if removed."""
     import re
 
     if not os.path.exists(path):
@@ -194,9 +194,9 @@ def _uninstall_toml_mcp(path: str) -> bool:
     try:
         data = _read_toml(path)
         servers = data.get("mcp_servers", {})
-        if "echovault" not in servers:
+        if "codevault" not in servers:
             return False
-        del servers["echovault"]
+        del servers["codevault"]
         if not servers:
             del data["mcp_servers"]
         _write_toml(path, data)
@@ -205,10 +205,10 @@ def _uninstall_toml_mcp(path: str) -> bool:
         # Non-standard TOML — use regex removal
         with open(path) as f:
             content = f.read()
-        if "mcp_servers.echovault" not in content:
+        if "mcp_servers.codevault" not in content:
             return False
         cleaned = re.sub(
-            r"\n*\[mcp_servers\.echovault\]\n(?:(?!\[)[^\n]*\n?)*",
+            r"\n*\[mcp_servers\.codevault\]\n(?:(?!\[)[^\n]*\n?)*",
             "",
             content,
         )
@@ -218,28 +218,28 @@ def _uninstall_toml_mcp(path: str) -> bool:
 
 
 def _install_opencode_mcp(path: str) -> bool:
-    """Install echovault into a JSON ``mcp`` key with OpenCode schema.
+    """Install codevault into a JSON ``mcp`` key with OpenCode schema.
 
     Returns True if the entry was added.
     """
     data = _read_json(path)
     mcp = data.setdefault("mcp", {})
-    if "echovault" in mcp:
+    if "codevault" in mcp:
         return False
-    mcp["echovault"] = OPENCODE_MCP_CONFIG
+    mcp["codevault"] = OPENCODE_MCP_CONFIG
     _write_json(path, data)
     return True
 
 
 def _uninstall_opencode_mcp(path: str) -> bool:
-    """Remove echovault from a JSON ``mcp`` key.  Returns True if removed."""
+    """Remove codevault from a JSON ``mcp`` key.  Returns True if removed."""
     if not os.path.exists(path):
         return False
     data = _read_json(path)
     mcp = data.get("mcp", {})
-    if "echovault" not in mcp:
+    if "codevault" not in mcp:
         return False
-    del mcp["echovault"]
+    del mcp["codevault"]
     if not mcp:
         del data["mcp"]
     if data:
@@ -279,11 +279,11 @@ def _remove_old_hooks(settings: dict) -> list[str]:
 
 def _get_skill_md_path() -> str:
     """Get the path to the bundled SKILL.md file."""
-    # Walk up from this file to find skills/echovault/SKILL.md in the package root.
+    # Walk up from this file to find skills/codevault/SKILL.md in the package root.
     # In an installed package, use importlib.resources; for dev, use relative path.
     this_dir = os.path.dirname(os.path.abspath(__file__))
-    # Try dev layout: src/memory/setup.py -> ../../skills/echovault/SKILL.md
-    dev_path = os.path.join(this_dir, "..", "..", "skills", "echovault", "SKILL.md")
+    # Try dev layout: src/memory/setup.py -> ../../skills/codevault/SKILL.md
+    dev_path = os.path.join(this_dir, "..", "..", "skills", "codevault", "SKILL.md")
     if os.path.exists(dev_path):
         return os.path.abspath(dev_path)
     # Try installed layout: check package data
@@ -298,7 +298,7 @@ def _get_skill_md_path() -> str:
 
 
 def _install_skill(agent_home: str) -> bool:
-    """Install the echovault SKILL.md into an agent's skills directory.
+    """Install the codevault SKILL.md into an agent's skills directory.
 
     Args:
         agent_home: Path to the agent's config directory (e.g. ~/.claude).
@@ -306,7 +306,7 @@ def _install_skill(agent_home: str) -> bool:
     Returns:
         True if skill was installed, False if already present.
     """
-    skill_dir = os.path.join(agent_home, "skills", "echovault")
+    skill_dir = os.path.join(agent_home, "skills", "codevault")
     skill_path = os.path.join(skill_dir, "SKILL.md")
 
     if os.path.exists(skill_path):
@@ -326,12 +326,12 @@ def _install_skill(agent_home: str) -> bool:
 
 
 def _uninstall_skill(agent_home: str) -> bool:
-    """Remove the echovault skill from an agent's skills directory.
+    """Remove the codevault skill from an agent's skills directory.
 
     Returns:
         True if skill was removed, False if not found.
     """
-    skill_dir = os.path.join(agent_home, "skills", "echovault")
+    skill_dir = os.path.join(agent_home, "skills", "codevault")
     if os.path.islink(skill_dir):
         os.remove(skill_dir)
         return True
@@ -343,7 +343,7 @@ def _uninstall_skill(agent_home: str) -> bool:
 
 _FALLBACK_SKILL_MD = """\
 ---
-name: echovault
+name: codevault
 description: Local-first memory for coding agents. You MUST retrieve memories at session start and save memories before session end. This is not optional.
 ---
 
@@ -464,8 +464,8 @@ def setup_claude_code(claude_home: str, *, project: bool = False) -> dict[str, s
         if removed:
             installed.append(f"removed old hooks: {', '.join(removed)}")
         # Remove mcpServers from settings.json (moved to dedicated config)
-        if "mcpServers" in settings and "echovault" in settings["mcpServers"]:
-            del settings["mcpServers"]["echovault"]
+        if "mcpServers" in settings and "codevault" in settings["mcpServers"]:
+            del settings["mcpServers"]["codevault"]
             if not settings["mcpServers"]:
                 del settings["mcpServers"]
             installed.append("migrated mcpServers from settings.json")
@@ -583,7 +583,7 @@ def setup_codex(codex_home: str) -> dict[str, str]:
     """Install EchoVault into Codex (AGENTS.md + MCP config).
 
     Writes memory instructions to AGENTS.md as a fallback and installs
-    ``[mcp_servers.echovault]`` into config.toml for native MCP support.
+    ``[mcp_servers.codevault]`` into config.toml for native MCP support.
 
     Args:
         codex_home: Path to the .codex directory (e.g. ~/.codex).
@@ -638,8 +638,8 @@ def uninstall_claude_code(claude_home: str, *, project: bool = False) -> dict[st
     settings_path = os.path.join(claude_home, "settings.json")
     if os.path.exists(settings_path):
         settings = _read_json(settings_path)
-        if "mcpServers" in settings and "echovault" in settings["mcpServers"]:
-            del settings["mcpServers"]["echovault"]
+        if "mcpServers" in settings and "codevault" in settings["mcpServers"]:
+            del settings["mcpServers"]["codevault"]
             if not settings["mcpServers"]:
                 del settings["mcpServers"]
             removed.append("legacy mcpServers from settings.json")

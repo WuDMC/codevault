@@ -1013,9 +1013,9 @@ def test_setup_opencode_project_flag(env_home, tmp_path, monkeypatch):
     assert opencode_path.exists()
     import json
     data = json.loads(opencode_path.read_text())
-    assert "echovault" in data["mcp"]
-    assert data["mcp"]["echovault"]["type"] == "local"
-    assert data["mcp"]["echovault"]["command"] == ["memory", "mcp"]
+    assert "codevault" in data["mcp"]
+    assert data["mcp"]["codevault"]["type"] == "local"
+    assert data["mcp"]["codevault"]["command"] == ["memory", "mcp"]
 
 
 def test_uninstall_opencode_project_flag(env_home, tmp_path, monkeypatch):

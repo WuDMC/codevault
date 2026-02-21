@@ -8,7 +8,7 @@
 
 ## What We Built
 
-Transformed [EchoVault](https://github.com/mraza007/echovault) from a **local-only SQLite memory system** into a **remote multi-user PostgreSQL server** with SSE transport and token-based auth.
+Transformed [EchoVault](https://github.com/mraza007/codevault) from a **local-only SQLite memory system** into a **remote multi-user PostgreSQL server** with SSE transport and token-based auth.
 
 ### Key Features
 
@@ -52,7 +52,7 @@ Transformed [EchoVault](https://github.com/mraza007/echovault) from a **local-on
 ## Phase Breakdown
 
 ### ✅ Phase 1: Fork & Understand (30 min)
-- Cloned `mraza007/echovault`
+- Cloned `mraza007/codevault`
 - Analyzed codebase structure
 - Identified files to modify: `db.py`, `core.py`, `mcp_server.py`, `cli.py`
 
@@ -356,10 +356,10 @@ max_connections = 20
 
 ### Recommended
 
-1. **Fork** `mraza007/echovault` on GitHub
+1. **Fork** `mraza007/codevault` on GitHub
 2. **Clone** your fork:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/echovault.git
+   git clone https://github.com/YOUR_USERNAME/codevault.git
    ```
 3. **Create branch**:
    ```bash
@@ -382,12 +382,12 @@ max_connections = 20
 
 ### Option 1: Install from your GitHub fork
 ```bash
-pip install git+https://github.com/YOUR_USERNAME/echovault.git@multiuser-postgres
+pip install git+https://github.com/YOUR_USERNAME/codevault.git@multiuser-postgres
 ```
 
 ### Option 2: Local development install
 ```bash
-cd /path/to/echovault-fork
+cd /path/to/codevault-fork
 pip install -e .
 ```
 
@@ -409,7 +409,7 @@ pip install -e .
 1. Deploy to GCP VM (follow `QUICKSTART.md`)
 2. Test with 2 laptops
 3. Harden for production (SSL, systemd, backups)
-4. (Optional) PR to upstream echovault
+4. (Optional) PR to upstream codevault
 
 ---
 

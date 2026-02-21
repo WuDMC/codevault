@@ -162,7 +162,7 @@ def handle_memory_context(
 
 def _create_server(service: MemoryService) -> Server:
     """Create and configure the MCP server with memory tools."""
-    server = Server("echovault")
+    server = Server("codevault")
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:

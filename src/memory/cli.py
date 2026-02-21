@@ -95,7 +95,7 @@ def config_clear_home():
 
 _CONFIG_TEMPLATE = """\
 # EchoVault configuration
-# Docs: https://github.com/mraza007/echovault#configure-embeddings-optional
+# Docs: https://github.com/mraza007/codevault#configure-embeddings-optional
 
 # Embedding provider for semantic search.
 # Without this, keyword search (FTS5) still works.

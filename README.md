@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/echovault-icon.svg" width="120" height="120" alt="EchoVault" />
+  <img src="assets/codevault-icon.svg" width="120" height="120" alt="EchoVault" />
 </p>
 
 <h1 align="center">EchoVault</h1>
@@ -45,7 +45,7 @@ I built EchoVault to solve this: local memory persistence for coding agents that
 ## Install
 
 ```bash
-pip install git+https://github.com/mraza007/echovault.git
+pip install git+https://github.com/mraza007/codevault.git
 memory init
 memory setup claude-code   # or: cursor, codex, opencode
 ```
@@ -199,7 +199,7 @@ All agents share the same memory vault at your effective `memory_home` path (def
 
 ```bash
 memory uninstall claude-code   # or: cursor, codex, opencode
-pip uninstall echovault
+pip uninstall codevault
 ```
 
 To also remove all stored memories: `rm -rf ~/.memory/`

@@ -40,7 +40,7 @@ class MemoryConfig:
 
 
 def _global_config_path() -> str:
-    return os.path.join(os.path.expanduser("~"), ".config", "echovault", "config.yaml")
+    return os.path.join(os.path.expanduser("~"), ".config", "codevault", "config.yaml")
 
 
 def _normalize_path(path: str) -> str:
