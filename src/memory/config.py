@@ -20,9 +20,23 @@ class ContextConfig:
 
 
 @dataclass
+class StorageConfig:
+    backend: str = "sqlite"  # "sqlite" or "postgresql"
+    url: Optional[str] = None  # PostgreSQL connection URL
+    path: Optional[str] = None  # SQLite path (deprecated, use ~/.memory/index.db)
+
+
+@dataclass
+class AuthConfig:
+    token: Optional[str] = None  # User auth token for remote/multi-user mode
+
+
+@dataclass
 class MemoryConfig:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
+    auth: AuthConfig = field(default_factory=AuthConfig)
 
 
 def _global_config_path() -> str:
@@ -121,12 +135,24 @@ def load_config(path: str) -> MemoryConfig:
             provider=e.get("provider", "ollama"),
             model=e.get("model", "nomic-embed-text"),
             base_url=e.get("base_url", "http://localhost:11434"),
-            api_key=e.get("api_key"),
+            api_key=e.get("api_key") or os.environ.get("OPENAI_API_KEY"),
         )
     if "context" in data:
         cx = data["context"]
         config.context = ContextConfig(
             semantic=cx.get("semantic", "auto"),
             topup_recent=cx.get("topup_recent", True),
+        )
+    if "storage" in data:
+        st = data["storage"]
+        config.storage = StorageConfig(
+            backend=st.get("backend", "sqlite"),
+            url=st.get("url"),
+            path=st.get("path"),
+        )
+    if "auth" in data:
+        au = data["auth"]
+        config.auth = AuthConfig(
+            token=au.get("token") or os.environ.get("MEMORY_AUTH_TOKEN"),
         )
     return config

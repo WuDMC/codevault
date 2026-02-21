@@ -33,12 +33,13 @@ class MemoryService:
     All operations are coordinated through this service.
     """
 
-    def __init__(self, memory_home: Optional[str] = None):
+    def __init__(self, memory_home: Optional[str] = None, user_id: Optional[int] = None):
         """Initialize the memory service.
 
         Args:
             memory_home: Optional path to memory home directory.
                         If not provided, uses MEMORY_HOME env var or ~/.memory
+            user_id: Optional user ID for PostgreSQL backend (required for multi-user)
         """
         self.memory_home = memory_home or get_memory_home()
         self.vault_dir = os.path.join(self.memory_home, "vault")
@@ -51,7 +52,18 @@ class MemoryService:
 
         # Load configuration and initialize database
         self.config = load_config(self.config_path)
-        self.db = MemoryDB(self.db_path)
+
+        # Initialize appropriate database backend
+        backend = self.config.storage.backend
+        if backend == "postgresql":
+            from memory.db_pg import MemoryDBPostgres
+            if not self.config.storage.url:
+                raise ValueError("PostgreSQL URL required in config.storage.url")
+            self.db = MemoryDBPostgres(self.config.storage.url, user_id=user_id)
+        else:
+            # Default: SQLite
+            from memory.db import MemoryDB
+            self.db = MemoryDB(self.db_path)
 
         # Lazy-load embedding provider (expensive operation)
         self._embedding_provider: Optional[EmbeddingProvider] = None

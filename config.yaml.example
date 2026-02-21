@@ -1,0 +1,27 @@
+# EchoVault Multi-User Configuration Example
+# Copy this to ~/.memory/config.yaml and customize
+
+# Storage backend: "sqlite" (local) or "postgresql" (remote multi-user)
+storage:
+  backend: postgresql
+  url: postgresql://user:password@YOUR_VM_IP:5432/memory
+
+# Authentication (required for PostgreSQL multi-user mode)
+auth:
+  token: YOUR_USER_TOKEN_HERE  # Get from `memory user add <name>`
+  # Or set via env var: export MEMORY_AUTH_TOKEN=...
+
+# Embedding provider for semantic search
+embedding:
+  provider: openai           # or "ollama"
+  model: text-embedding-3-small
+  api_key: sk-...            # Or set via OPENAI_API_KEY env var
+  # For Ollama:
+  # provider: ollama
+  # model: nomic-embed-text
+  # base_url: http://localhost:11434
+
+# Context settings
+context:
+  semantic: auto              # "auto", "always", or "never"
+  topup_recent: true

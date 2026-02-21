@@ -562,13 +562,125 @@ def uninstall_opencode_cmd(project):
     click.echo(result["message"])
 
 
-@main.command()
-def mcp():
-    """Start the EchoVault MCP server (stdio transport)."""
-    import asyncio
-    from memory.mcp_server import run_server
+@main.group()
+def user():
+    """Manage users (PostgreSQL backend only)."""
+    pass
 
-    asyncio.run(run_server())
+
+@user.command("add")
+@click.argument("name")
+def user_add(name):
+    """Create a new user and print their auth token."""
+    from memory.config import get_memory_home, load_config
+    home = get_memory_home()
+    config = load_config(os.path.join(home, "config.yaml"))
+
+    if config.storage.backend != "postgresql":
+        click.echo("Error: user management requires PostgreSQL backend", err=True)
+        click.echo("Set storage.backend = postgresql in config.yaml", err=True)
+        return
+
+    from memory.db_pg import MemoryDBPostgres
+    db = MemoryDBPostgres(config.storage.url, user_id=None)
+
+    try:
+        user_id, token = db.create_user(name)
+        click.echo(f"User created: {name} (id={user_id})")
+        click.echo(f"Token: {token}")
+        click.echo("")
+        click.echo("Save this token! Add it to config.yaml:")
+        click.echo("auth:")
+        click.echo(f"  token: {token}")
+    except Exception as e:
+        click.echo(f"Error creating user: {e}", err=True)
+    finally:
+        db.close()
+
+
+@user.command("list")
+def user_list():
+    """List all users."""
+    from memory.config import get_memory_home, load_config
+    home = get_memory_home()
+    config = load_config(os.path.join(home, "config.yaml"))
+
+    if config.storage.backend != "postgresql":
+        click.echo("Error: user management requires PostgreSQL backend", err=True)
+        return
+
+    from memory.db_pg import MemoryDBPostgres
+    db = MemoryDBPostgres(config.storage.url, user_id=None)
+
+    try:
+        users = db.list_users()
+        if not users:
+            click.echo("No users found.")
+        else:
+            click.echo(f"Total users: {len(users)}")
+            for u in users:
+                created = u.get("created_at", "")[:10] if u.get("created_at") else "unknown"
+                click.echo(f"  {u['id']:3d}  {u['name']:20s}  (created: {created})")
+    except Exception as e:
+        click.echo(f"Error listing users: {e}", err=True)
+    finally:
+        db.close()
+
+
+@main.command()
+@click.option("--transport", type=click.Choice(["stdio", "sse"]), default="stdio", help="Transport type")
+@click.option("--port", type=int, default=8420, help="Port for SSE transport")
+@click.option("--host", default="127.0.0.1", help="Host for SSE transport")
+def mcp(transport, port, host):
+    """Start the EchoVault MCP server."""
+    import asyncio
+
+    if transport == "stdio":
+        from memory.mcp_server import run_server
+        asyncio.run(run_server())
+    else:
+        # SSE transport with auth
+        from memory.mcp_server_sse import create_server, resolve_user_id_from_token
+        from memory.config import get_memory_home, load_config
+        from mcp.server.sse import SseServerTransport
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+        import uvicorn
+
+        home = get_memory_home()
+        config = load_config(os.path.join(home, "config.yaml"))
+
+        # Token-based auth for multi-user mode
+        async def handle_sse(request):
+            auth_header = request.headers.get("Authorization", "")
+            token = None
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+
+            user_id = None
+            if token and config.storage.backend == "postgresql":
+                user_id = resolve_user_id_from_token(token)
+                if not user_id:
+                    from starlette.responses import JSONResponse
+                    return JSONResponse({"error": "Invalid token"}, status_code=401)
+
+            server, service = create_server(user_id=user_id)
+
+            async with SseServerTransport("/messages") as transport_layer:
+                try:
+                    await server.run(
+                        transport_layer.read_stream,
+                        transport_layer.write_stream,
+                        server.create_initialization_options()
+                    )
+                finally:
+                    service.close()
+
+            return transport_layer.send_stream
+
+        app = Starlette(routes=[Route("/sse", endpoint=handle_sse)])
+        click.echo(f"Starting MCP server on {host}:{port} (SSE transport)")
+        uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":
