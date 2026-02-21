@@ -51,7 +51,7 @@ def seeded_service(service):
 
 class TestMemorySaveTool:
     def test_save_description_recommends_structured_details(self):
-        from memory.mcp_server import SAVE_DESCRIPTION
+        from memory.mcp_handlers import SAVE_DESCRIPTION
 
         assert "Context" in SAVE_DESCRIPTION
         assert "Options considered" in SAVE_DESCRIPTION
@@ -60,7 +60,7 @@ class TestMemorySaveTool:
         assert "Follow-up" in SAVE_DESCRIPTION
 
     def test_save_creates_memory(self, service):
-        from memory.mcp_server import handle_memory_save
+        from memory.mcp_handlers import handle_memory_save
 
         result = handle_memory_save(
             service,
@@ -73,7 +73,7 @@ class TestMemorySaveTool:
         assert "id" in data
 
     def test_save_with_all_fields(self, service):
-        from memory.mcp_server import handle_memory_save
+        from memory.mcp_handlers import handle_memory_save
 
         result = handle_memory_save(
             service,
@@ -91,7 +91,7 @@ class TestMemorySaveTool:
         assert data["action"] == "created"
 
     def test_save_dedup_returns_updated(self, seeded_service):
-        from memory.mcp_server import handle_memory_save
+        from memory.mcp_handlers import handle_memory_save
 
         result = handle_memory_save(
             seeded_service,
@@ -107,7 +107,7 @@ class TestMemorySaveTool:
 
 class TestMemorySearchTool:
     def test_search_returns_results(self, seeded_service):
-        from memory.mcp_server import handle_memory_search
+        from memory.mcp_handlers import handle_memory_search
 
         result = handle_memory_search(
             seeded_service,
@@ -119,7 +119,7 @@ class TestMemorySearchTool:
         assert "score" in data[0]
 
     def test_search_with_project_filter(self, seeded_service):
-        from memory.mcp_server import handle_memory_search
+        from memory.mcp_handlers import handle_memory_search
 
         result = handle_memory_search(
             seeded_service,
@@ -132,7 +132,7 @@ class TestMemorySearchTool:
             assert r["project"] == "test-project"
 
     def test_search_no_match_low_scores(self, seeded_service):
-        from memory.mcp_server import handle_memory_search
+        from memory.mcp_handlers import handle_memory_search
 
         result = handle_memory_search(
             seeded_service,
@@ -147,7 +147,7 @@ class TestMemorySearchTool:
 
 class TestMemoryContextTool:
     def test_context_returns_recent_memories(self, seeded_service):
-        from memory.mcp_server import handle_memory_context
+        from memory.mcp_handlers import handle_memory_context
 
         result = handle_memory_context(
             seeded_service,
@@ -158,7 +158,7 @@ class TestMemoryContextTool:
         assert len(data["memories"]) == 3
 
     def test_context_respects_limit(self, seeded_service):
-        from memory.mcp_server import handle_memory_context
+        from memory.mcp_handlers import handle_memory_context
 
         result = handle_memory_context(
             seeded_service,
@@ -169,7 +169,7 @@ class TestMemoryContextTool:
         assert len(data["memories"]) == 1
 
     def test_context_empty_project(self, service):
-        from memory.mcp_server import handle_memory_context
+        from memory.mcp_handlers import handle_memory_context
 
         result = handle_memory_context(
             service,

@@ -180,6 +180,20 @@ class MemoryDB:
             # Dimension mismatch — caller should handle this
             raise DimensionMismatchError(stored_dim, dim)
 
+    def get_rowid_by_memory_id(self, memory_id: str) -> Optional[int]:
+        """Get the rowid for a memory by its UUID.
+
+        Args:
+            memory_id: UUID string of the memory (or prefix)
+
+        Returns:
+            Rowid or None if not found
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT rowid FROM memories WHERE id LIKE ?", (memory_id + "%",))
+        row = cursor.fetchone()
+        return row["rowid"] if row else None
+
     def insert_memory(self, mem: Memory, details: Optional[str] = None) -> int:
         """Insert a memory into the database.
 

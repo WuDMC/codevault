@@ -1,9 +1,22 @@
 """Hybrid search combining FTS5 keyword search and semantic vector search."""
 
-from typing import Optional
+from typing import Optional, Protocol
 
-from memory.db import MemoryDB
 from memory.embeddings.base import EmbeddingProvider
+
+
+class MemoryDBLike(Protocol):
+    """Protocol for memory database backends (SQLite and PostgreSQL)."""
+
+    def fts_search(
+        self, query: str, limit: int = 10,
+        project: Optional[str] = None, source: Optional[str] = None,
+    ) -> list[dict]: ...
+
+    def vector_search(
+        self, query_embedding: list[float], limit: int = 10,
+        project: Optional[str] = None, source: Optional[str] = None,
+    ) -> list[dict]: ...
 
 
 def merge_results(
@@ -56,7 +69,7 @@ def merge_results(
 
 
 def tiered_search(
-    db: MemoryDB,
+    db: MemoryDBLike,
     embedding_provider: Optional[EmbeddingProvider],
     query: str,
     limit: int = 5,
@@ -112,7 +125,7 @@ def tiered_search(
 
 
 def hybrid_search(
-    db: MemoryDB,
+    db: MemoryDBLike,
     embedding_provider: Optional[EmbeddingProvider],
     query: str,
     limit: int = 5,

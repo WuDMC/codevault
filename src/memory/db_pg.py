@@ -1,6 +1,7 @@
 """PostgreSQL database layer with pgvector for multi-user memory storage."""
 
 import json
+from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -9,6 +10,16 @@ import psycopg2.extras
 from pgvector.psycopg2 import register_vector
 
 from memory.models import Memory, MemoryDetail
+
+
+def _normalize_row(row: dict) -> dict:
+    """Normalize PG row: convert datetime objects to ISO strings."""
+    result = dict(row)
+    for key in ("created_at", "updated_at", "started_at", "ended_at"):
+        val = result.get(key)
+        if isinstance(val, datetime):
+            result[key] = val.isoformat()
+    return result
 
 
 class MemoryDBPostgres:
@@ -29,14 +40,27 @@ class MemoryDBPostgres:
         # Register pgvector types
         register_vector(self.conn)
 
-        # Create schema if needed
-        self._create_schema()
+        # Create schema if needed (only once per database, not every connection)
+        self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        """Create schema only if tables don't exist yet."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'memories'
+            )
+        """)
+        exists = cursor.fetchone()[0]
+        if not exists:
+            self._create_schema()
 
     def _create_schema(self) -> None:
         """Create database tables and indexes if they don't exist."""
         cursor = self.conn.cursor()
 
-        # Enable extensions
+        # Enable extensions (requires superuser on first run)
         cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
         cursor.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
 
@@ -170,7 +194,41 @@ class MemoryDBPostgres:
         """Drop and recreate the vector index."""
         cursor = self.conn.cursor()
         cursor.execute("DROP INDEX IF EXISTS idx_memories_embedding")
+        cursor.execute("UPDATE memories SET embedding = NULL WHERE user_id = %s", (self.user_id,))
         self.conn.commit()
+
+    def _create_vec_table(self, dim: int) -> None:
+        """Recreate the HNSW vector index after reindex.
+
+        Args:
+            dim: Embedding dimension (used for compatibility, PG column is fixed)
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_memories_embedding
+            ON memories USING hnsw (embedding vector_cosine_ops)
+            WITH (m = 16, ef_construction = 64)
+        """)
+        self.conn.commit()
+
+    def get_rowid_by_memory_id(self, memory_id: str) -> Optional[int]:
+        """Get the primary key (id) for a memory by its memory_id.
+
+        Args:
+            memory_id: UUID string of the memory
+
+        Returns:
+            Row id or None if not found
+        """
+        if not self.user_id:
+            return None
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT id FROM memories
+            WHERE user_id = %s AND memory_id LIKE %s
+        """, (self.user_id, memory_id + "%"))
+        row = cursor.fetchone()
+        return row[0] if row else None
 
     def get_embedding_dim(self) -> Optional[int]:
         """Get stored embedding dimension from meta table.
@@ -287,7 +345,7 @@ class MemoryDBPostgres:
 
         row = cursor.fetchone()
         if row:
-            return dict(row)
+            return _normalize_row(row)
         return None
 
     def get_details(self, memory_id: str) -> Optional[MemoryDetail]:
@@ -470,7 +528,7 @@ class MemoryDBPostgres:
             params.append(source)
 
         where_clause = " AND ".join(where_clauses)
-        params.extend([query, limit])
+        params.extend([query, query, limit])
 
         cursor.execute(f"""
             SELECT m.*,
@@ -483,7 +541,7 @@ class MemoryDBPostgres:
             LIMIT %s
         """, params)
 
-        return [dict(row) for row in cursor.fetchall()]
+        return [_normalize_row(row) for row in cursor.fetchall()]
 
     def vector_search(
         self,
@@ -520,7 +578,7 @@ class MemoryDBPostgres:
             params.append(source)
 
         where_clause = " AND ".join(where_clauses)
-        params.extend([query_embedding, limit])
+        params.extend([query_embedding, query_embedding, limit])
 
         cursor.execute(f"""
             SELECT m.*,
@@ -532,7 +590,7 @@ class MemoryDBPostgres:
             LIMIT %s
         """, params)
 
-        return [dict(row) for row in cursor.fetchall()]
+        return [_normalize_row(row) for row in cursor.fetchall()]
 
     def list_recent(
         self,
@@ -578,7 +636,7 @@ class MemoryDBPostgres:
             LIMIT %s
         """, params)
 
-        return [dict(row) for row in cursor.fetchall()]
+        return [_normalize_row(row) for row in cursor.fetchall()]
 
     def list_all_for_reindex(self) -> list[dict]:
         """List all memories for re-embedding.
@@ -596,7 +654,7 @@ class MemoryDBPostgres:
             WHERE user_id = %s
             ORDER BY id
         """, (self.user_id,))
-        return [dict(row) for row in cursor.fetchall()]
+        return [_normalize_row(row) for row in cursor.fetchall()]
 
     def count_memories(
         self,
@@ -714,7 +772,7 @@ class MemoryDBPostgres:
             FROM users
             ORDER BY id
         """)
-        return [dict(row) for row in cursor.fetchall()]
+        return [_normalize_row(row) for row in cursor.fetchall()]
 
     def get_user_by_token(self, token: str) -> Optional[dict]:
         """Get user by token (admin/auth operation).
@@ -733,5 +791,5 @@ class MemoryDBPostgres:
         """, (token,))
         row = cursor.fetchone()
         if row:
-            return dict(row)
+            return _normalize_row(row)
         return None

@@ -644,14 +644,19 @@ def mcp(transport, port, host):
         from memory.config import get_memory_home, load_config
         from mcp.server.sse import SseServerTransport
         from starlette.applications import Starlette
-        from starlette.routing import Route
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse, Response
+        from starlette.routing import Mount, Route
         import uvicorn
 
         home = get_memory_home()
         config = load_config(os.path.join(home, "config.yaml"))
 
-        # Token-based auth for multi-user mode
-        async def handle_sse(request):
+        # Create SSE transport at app level — shared across all connections
+        sse_transport = SseServerTransport("/messages/")
+
+        async def handle_sse(request: Request):
+            # Token-based auth for multi-user mode
             auth_header = request.headers.get("Authorization", "")
             token = None
             if auth_header.startswith("Bearer "):
@@ -661,24 +666,27 @@ def mcp(transport, port, host):
             if token and config.storage.backend == "postgresql":
                 user_id = resolve_user_id_from_token(token)
                 if not user_id:
-                    from starlette.responses import JSONResponse
                     return JSONResponse({"error": "Invalid token"}, status_code=401)
 
             server, service = create_server(user_id=user_id)
 
-            async with SseServerTransport("/messages") as transport_layer:
+            async with sse_transport.connect_sse(
+                request.scope, request.receive, request._send
+            ) as streams:
                 try:
                     await server.run(
-                        transport_layer.read_stream,
-                        transport_layer.write_stream,
+                        streams[0], streams[1],
                         server.create_initialization_options()
                     )
                 finally:
                     service.close()
 
-            return transport_layer.send_stream
+            return Response()
 
-        app = Starlette(routes=[Route("/sse", endpoint=handle_sse)])
+        app = Starlette(routes=[
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=sse_transport.handle_post_message),
+        ])
         click.echo(f"Starting MCP server on {host}:{port} (SSE transport)")
         uvicorn.run(app, host=host, port=port)
 

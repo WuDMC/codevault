@@ -277,12 +277,9 @@ class MemoryService:
                     embed_text = f"{top['title']} {raw.what} {raw.why or ''} {raw.impact or ''} {' '.join(merged_tags)}"
                     embedding = self.embedding_provider.embed(embed_text)
                     if self._ensure_vectors(embedding):
-                        # Get rowid for the existing memory
-                        cursor = self.db.conn.cursor()
-                        cursor.execute("SELECT rowid FROM memories WHERE id = ?", (existing_id,))
-                        row = cursor.fetchone()
-                        if row:
-                            self.db.insert_vector(row["rowid"], embedding)
+                        rowid = self.db.get_rowid_by_memory_id(existing_id)
+                        if rowid:
+                            self.db.insert_vector(rowid, embedding)
                 except Exception:
                     pass
 
@@ -508,10 +505,14 @@ class MemoryService:
         for i, mem in enumerate(memories):
             tags = ""
             if mem["tags"]:
-                try:
-                    tags = " ".join(json.loads(mem["tags"]))
-                except (json.JSONDecodeError, TypeError):
-                    tags = str(mem["tags"])
+                raw_tags = mem["tags"]
+                if isinstance(raw_tags, list):
+                    tags = " ".join(raw_tags)
+                elif isinstance(raw_tags, str):
+                    try:
+                        tags = " ".join(json.loads(raw_tags))
+                    except (json.JSONDecodeError, TypeError):
+                        tags = raw_tags
 
             embed_text = (
                 f"{mem['title']} {mem['what']} "
