@@ -89,6 +89,7 @@ class MemoryDBPostgres:
                 category    VARCHAR(50) DEFAULT 'note',
                 project     VARCHAR(255),
                 source      TEXT,
+                agent       TEXT,
                 related_files TEXT[] DEFAULT '{}',
                 file_path   TEXT NOT NULL,
                 section_anchor TEXT,
@@ -182,6 +183,20 @@ class MemoryDBPostgres:
                 started_at  TIMESTAMPTZ DEFAULT NOW(),
                 ended_at    TIMESTAMPTZ
             )
+        """)
+
+        # Migration: add agent column if missing
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='memories' AND column_name='agent'
+                ) THEN
+                    ALTER TABLE memories ADD COLUMN agent TEXT;
+                    CREATE INDEX idx_memories_agent ON memories (user_id, agent);
+                END IF;
+            END $$;
         """)
 
         self.conn.commit()
@@ -282,12 +297,12 @@ class MemoryDBPostgres:
         cursor.execute("""
             INSERT INTO memories (
                 user_id, memory_id, title, what, why, impact, tags, category, project,
-                source, related_files, file_path, section_anchor, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                source, agent, related_files, file_path, section_anchor, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             self.user_id, mem.id, mem.title, mem.what, mem.why, mem.impact,
-            mem.tags, mem.category, mem.project, mem.source,
+            mem.tags, mem.category, mem.project, mem.source, mem.agent,
             mem.related_files, mem.file_path, mem.section_anchor,
             mem.created_at, mem.updated_at
         ))
@@ -499,6 +514,7 @@ class MemoryDBPostgres:
         limit: int = 10,
         project: Optional[str] = None,
         source: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> list[dict]:
         """Search memories using PostgreSQL full-text search.
 
@@ -507,6 +523,7 @@ class MemoryDBPostgres:
             limit: Max results
             project: Optional project filter
             source: Optional source filter
+            agent: Optional agent role filter
 
         Returns:
             List of memory dictionaries with scores
@@ -526,6 +543,10 @@ class MemoryDBPostgres:
         if source:
             where_clauses.append("m.source = %s")
             params.append(source)
+
+        if agent:
+            where_clauses.append("m.agent = %s")
+            params.append(agent)
 
         where_clause = " AND ".join(where_clauses)
         params.extend([query, query, limit])
@@ -549,6 +570,7 @@ class MemoryDBPostgres:
         limit: int = 10,
         project: Optional[str] = None,
         source: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> list[dict]:
         """Search memories using vector similarity.
 
@@ -557,6 +579,7 @@ class MemoryDBPostgres:
             limit: Max results
             project: Optional project filter
             source: Optional source filter
+            agent: Optional agent role filter
 
         Returns:
             List of memory dictionaries with similarity scores
@@ -576,6 +599,10 @@ class MemoryDBPostgres:
         if source:
             where_clauses.append("m.source = %s")
             params.append(source)
+
+        if agent:
+            where_clauses.append("m.agent = %s")
+            params.append(agent)
 
         where_clause = " AND ".join(where_clauses)
         params.extend([query_embedding, query_embedding, limit])
@@ -597,6 +624,7 @@ class MemoryDBPostgres:
         limit: int = 10,
         project: Optional[str] = None,
         source: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> list[dict]:
         """List recent memories ordered by creation date descending.
 
@@ -604,6 +632,7 @@ class MemoryDBPostgres:
             limit: Max results
             project: Optional project filter
             source: Optional source filter
+            agent: Optional agent role filter
 
         Returns:
             List of memory dictionaries
@@ -623,6 +652,10 @@ class MemoryDBPostgres:
         if source:
             where_clauses.append("m.source = %s")
             params.append(source)
+
+        if agent:
+            where_clauses.append("m.agent = %s")
+            params.append(agent)
 
         where_clause = " AND ".join(where_clauses)
         params.append(limit)
@@ -660,12 +693,14 @@ class MemoryDBPostgres:
         self,
         project: Optional[str] = None,
         source: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> int:
         """Count total memories.
 
         Args:
             project: Optional project filter
             source: Optional source filter
+            agent: Optional agent role filter
 
         Returns:
             Total count
@@ -685,6 +720,10 @@ class MemoryDBPostgres:
         if source:
             where_clauses.append("source = %s")
             params.append(source)
+
+        if agent:
+            where_clauses.append("agent = %s")
+            params.append(agent)
 
         where_clause = " AND ".join(where_clauses)
 

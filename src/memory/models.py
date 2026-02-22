@@ -30,6 +30,7 @@ class RawMemoryInput:
     related_files: list[str] = field(default_factory=list)
     details: Optional[str] = None
     source: Optional[str] = None
+    agent: Optional[str] = None
 
 
 @dataclass
@@ -45,6 +46,7 @@ class Memory:
     category: Optional[str]
     project: str
     source: Optional[str]
+    agent: Optional[str]
     related_files: list[str]
     file_path: str
     section_anchor: str
@@ -66,6 +68,7 @@ class Memory:
             category=raw.category,
             project=project,
             source=raw.source,
+            agent=raw.agent,
             related_files=raw.related_files,
             file_path=file_path,
             section_anchor=anchor,
@@ -95,6 +98,7 @@ class SearchResult:
     tags: list[str]
     project: str
     source: Optional[str]
+    agent: Optional[str]
     score: float
     has_details: bool
     file_path: str

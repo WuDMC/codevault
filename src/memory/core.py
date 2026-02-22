@@ -329,6 +329,7 @@ class MemoryService:
         limit: int = 5,
         project: Optional[str] = None,
         source: Optional[str] = None,
+        agent: Optional[str] = None,
         use_vectors: bool = True,
     ) -> list[dict]:
         """Search memories using hybrid FTS + vector search.
@@ -353,6 +354,7 @@ class MemoryService:
                 limit=limit,
                 project=project,
                 source=source,
+                agent=agent,
             )
 
         # Use tiered search: FTS first, embed only if sparse results
@@ -365,6 +367,7 @@ class MemoryService:
                     limit=limit,
                     project=project,
                     source=source,
+                    agent=agent,
                 )
             except DimensionMismatchError:
                 self._vectors_available = False
@@ -379,6 +382,7 @@ class MemoryService:
             limit=limit,
             project=project,
             source=source,
+            agent=agent,
         )
 
     def _ollama_warm(self) -> bool:
@@ -404,6 +408,7 @@ class MemoryService:
         limit: int = 10,
         project: Optional[str] = None,
         source: Optional[str] = None,
+        agent: Optional[str] = None,
         query: Optional[str] = None,
         semantic_mode: Optional[str] = None,
         topup_recent: Optional[bool] = None,
@@ -419,7 +424,7 @@ class MemoryService:
         Returns:
             Tuple of (list of memory pointer dicts, total count)
         """
-        total = self.db.count_memories(project=project, source=source)
+        total = self.db.count_memories(project=project, source=source, agent=agent)
 
         if semantic_mode is None:
             semantic_mode = self.config.context.semantic
@@ -439,11 +444,12 @@ class MemoryService:
                 limit=limit,
                 project=project,
                 source=source,
+                agent=agent,
                 use_vectors=use_vectors,
             )
             if topup_recent and len(results) < limit:
                 recent = self.db.list_recent(
-                    limit=limit, project=project, source=source
+                    limit=limit, project=project, source=source, agent=agent
                 )
                 seen = {r["id"] for r in results}
                 for r in recent:
@@ -453,7 +459,7 @@ class MemoryService:
                     if len(results) >= limit:
                         break
         else:
-            results = self.db.list_recent(limit=limit, project=project, source=source)
+            results = self.db.list_recent(limit=limit, project=project, source=source, agent=agent)
 
         return results, total
 

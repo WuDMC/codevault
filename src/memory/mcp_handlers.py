@@ -65,6 +65,8 @@ def handle_memory_save(
     related_files: Optional[list[str]] = None,
     details: Optional[str] = None,
     project: Optional[str] = None,
+    source: Optional[str] = None,
+    agent: Optional[str] = None,
 ) -> str:
     """Handle memory_save tool call. Returns JSON string."""
     project = project or os.path.basename(os.getcwd())
@@ -81,6 +83,8 @@ def handle_memory_save(
         category=category,
         related_files=related_files or [],
         details=details,
+        source=source,
+        agent=agent,
     )
 
     result = service.save(raw, project=project)
@@ -92,9 +96,11 @@ def handle_memory_search(
     query: str,
     limit: int = 5,
     project: Optional[str] = None,
+    source: Optional[str] = None,
+    agent: Optional[str] = None,
 ) -> str:
     """Handle memory_search tool call. Returns JSON string."""
-    results = service.search(query, limit=limit, project=project)
+    results = service.search(query, limit=limit, project=project, source=source, agent=agent)
 
     clean = []
     for r in results:
@@ -121,6 +127,8 @@ def handle_memory_context(
     service: MemoryService,
     project: Optional[str] = None,
     limit: int = 10,
+    source: Optional[str] = None,
+    agent: Optional[str] = None,
 ) -> str:
     """Handle memory_context tool call. Returns JSON string."""
     project = project or os.path.basename(os.getcwd())
@@ -128,6 +136,8 @@ def handle_memory_context(
     results, total = service.get_context(
         limit=limit,
         project=project,
+        source=source,
+        agent=agent,
         semantic_mode="never",
     )
 
@@ -208,6 +218,8 @@ def create_mcp_server(service: MemoryService) -> Server:
                             ),
                         },
                         "project": {"type": "string", "description": "Project name. Auto-detected from cwd if omitted."},
+                        "source": {"type": "string", "description": "Client/IDE that saved this: claude-code, cursor, codex."},
+                        "agent": {"type": "string", "description": "Agent role: architect, developer, reviewer, orchestrator, etc."},
                     },
                     "required": ["title", "what"],
                 },
@@ -221,6 +233,8 @@ def create_mcp_server(service: MemoryService) -> Server:
                         "query": {"type": "string", "description": "Search terms"},
                         "limit": {"type": "integer", "default": 5, "description": "Max results"},
                         "project": {"type": "string", "description": "Filter to project."},
+                        "source": {"type": "string", "description": "Filter by client/IDE."},
+                        "agent": {"type": "string", "description": "Filter by agent role."},
                     },
                     "required": ["query"],
                 },
@@ -233,6 +247,8 @@ def create_mcp_server(service: MemoryService) -> Server:
                     "properties": {
                         "project": {"type": "string", "description": "Project name. Auto-detected from cwd if omitted."},
                         "limit": {"type": "integer", "default": 10, "description": "Max memories"},
+                        "source": {"type": "string", "description": "Filter by client/IDE."},
+                        "agent": {"type": "string", "description": "Filter by agent role."},
                     },
                 },
             ),

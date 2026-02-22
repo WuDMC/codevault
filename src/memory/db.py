@@ -53,6 +53,7 @@ class MemoryDB:
                 category TEXT,
                 project TEXT NOT NULL,
                 source TEXT,
+                agent TEXT,
                 related_files TEXT,
                 file_path TEXT NOT NULL,
                 section_anchor TEXT,
@@ -80,7 +81,7 @@ class MemoryDB:
         # FTS5 virtual table
         cursor.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-                title, what, why, impact, tags, category, project, source,
+                title, what, why, impact, tags, category, project, source, agent,
                 content='memories', content_rowid='rowid',
                 tokenize='porter unicode61'
             )
@@ -89,18 +90,18 @@ class MemoryDB:
         # FTS5 auto-sync trigger for INSERT
         cursor.execute("""
             CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-                INSERT INTO memories_fts(rowid, title, what, why, impact, tags, category, project, source)
-                VALUES (new.rowid, new.title, new.what, new.why, new.impact, new.tags, new.category, new.project, new.source);
+                INSERT INTO memories_fts(rowid, title, what, why, impact, tags, category, project, source, agent)
+                VALUES (new.rowid, new.title, new.what, new.why, new.impact, new.tags, new.category, new.project, new.source, new.agent);
             END
         """)
 
         # FTS5 auto-sync trigger for UPDATE
         cursor.execute("""
             CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, title, what, why, impact, tags, category, project, source)
-                VALUES ('delete', old.rowid, old.title, old.what, old.why, old.impact, old.tags, old.category, old.project, old.source);
-                INSERT INTO memories_fts(rowid, title, what, why, impact, tags, category, project, source)
-                VALUES (new.rowid, new.title, new.what, new.why, new.impact, new.tags, new.category, new.project, new.source);
+                INSERT INTO memories_fts(memories_fts, rowid, title, what, why, impact, tags, category, project, source, agent)
+                VALUES ('delete', old.rowid, old.title, old.what, old.why, old.impact, old.tags, old.category, old.project, old.source, old.agent);
+                INSERT INTO memories_fts(rowid, title, what, why, impact, tags, category, project, source, agent)
+                VALUES (new.rowid, new.title, new.what, new.why, new.impact, new.tags, new.category, new.project, new.source, new.agent);
             END
         """)
 
@@ -109,6 +110,37 @@ class MemoryDB:
         columns = {row[1] for row in cursor.fetchall()}
         if "updated_count" not in columns:
             cursor.execute("ALTER TABLE memories ADD COLUMN updated_count INTEGER DEFAULT 0")
+
+        # Migration: add agent column if missing + rebuild FTS to include it
+        if "agent" not in columns:
+            cursor.execute("ALTER TABLE memories ADD COLUMN agent TEXT")
+            # FTS5 can't be ALTERed — drop and recreate with agent column
+            cursor.execute("DROP TRIGGER IF EXISTS memories_ai")
+            cursor.execute("DROP TRIGGER IF EXISTS memories_au")
+            cursor.execute("DROP TABLE IF EXISTS memories_fts")
+            cursor.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                    title, what, why, impact, tags, category, project, source, agent,
+                    content='memories', content_rowid='rowid',
+                    tokenize='porter unicode61'
+                )
+            """)
+            cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+                    INSERT INTO memories_fts(rowid, title, what, why, impact, tags, category, project, source, agent)
+                    VALUES (new.rowid, new.title, new.what, new.why, new.impact, new.tags, new.category, new.project, new.source, new.agent);
+                END
+            """)
+            cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, title, what, why, impact, tags, category, project, source, agent)
+                    VALUES ('delete', old.rowid, old.title, old.what, old.why, old.impact, old.tags, old.category, old.project, old.source, old.agent);
+                    INSERT INTO memories_fts(rowid, title, what, why, impact, tags, category, project, source, agent)
+                    VALUES (new.rowid, new.title, new.what, new.why, new.impact, new.tags, new.category, new.project, new.source, new.agent);
+                END
+            """)
+            # Rebuild FTS content from existing memories
+            cursor.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
 
         # Create vec table if dimension is already known (e.g. reopening existing DB)
         dim = self.get_embedding_dim()
@@ -213,12 +245,12 @@ class MemoryDB:
         cursor.execute("""
             INSERT INTO memories (
                 id, title, what, why, impact, tags, category, project,
-                source, related_files, file_path, section_anchor,
+                source, agent, related_files, file_path, section_anchor,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             mem.id, mem.title, mem.what, mem.why, mem.impact,
-            tags_json, mem.category, mem.project, mem.source,
+            tags_json, mem.category, mem.project, mem.source, mem.agent,
             related_files_json, mem.file_path, mem.section_anchor,
             mem.created_at, mem.updated_at
         ))
@@ -397,6 +429,7 @@ class MemoryDB:
         limit: int = 10,
         project: Optional[str] = None,
         source: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> list[dict]:
         """Search memories using FTS5 full-text search.
 
@@ -405,6 +438,7 @@ class MemoryDB:
             limit: Maximum number of results
             project: Optional project filter
             source: Optional source filter
+            agent: Optional agent role filter
 
         Returns:
             List of memory dictionaries with BM25 scores
@@ -424,6 +458,10 @@ class MemoryDB:
         if source:
             where_clauses.append("m.source = ?")
             params.append(source)
+
+        if agent:
+            where_clauses.append("m.agent = ?")
+            params.append(agent)
 
         where_clause = ""
         if where_clauses:
@@ -451,6 +489,7 @@ class MemoryDB:
         limit: int = 10,
         project: Optional[str] = None,
         source: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> list[dict]:
         """Search memories using vector similarity.
 
@@ -459,6 +498,7 @@ class MemoryDB:
             limit: Maximum number of results
             project: Optional project filter
             source: Optional source filter
+            agent: Optional agent role filter
 
         Returns:
             List of memory dictionaries with similarity scores
@@ -487,11 +527,13 @@ class MemoryDB:
             del result["distance"]
             results.append(result)
 
-        # Post-filter by project/source if needed
+        # Post-filter by project/source/agent if needed
         if project:
             results = [r for r in results if r["project"] == project]
         if source:
             results = [r for r in results if r["source"] == source]
+        if agent:
+            results = [r for r in results if r.get("agent") == agent]
 
         return results
 
@@ -500,6 +542,7 @@ class MemoryDB:
         limit: int = 10,
         project: Optional[str] = None,
         source: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> list[dict]:
         """List recent memories ordered by creation date descending.
 
@@ -507,6 +550,7 @@ class MemoryDB:
             limit: Maximum number of results
             project: Optional project filter
             source: Optional source filter
+            agent: Optional agent role filter
 
         Returns:
             List of memory dictionaries with metadata
@@ -521,6 +565,10 @@ class MemoryDB:
         if source:
             where_clauses.append("m.source = ?")
             params.append(source)
+
+        if agent:
+            where_clauses.append("m.agent = ?")
+            params.append(agent)
 
         where_clause = ""
         if where_clauses:
@@ -558,12 +606,14 @@ class MemoryDB:
         self,
         project: Optional[str] = None,
         source: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> int:
         """Count total memories with optional filters.
 
         Args:
             project: Optional project filter
             source: Optional source filter
+            agent: Optional agent role filter
 
         Returns:
             Total count of matching memories
@@ -578,6 +628,10 @@ class MemoryDB:
         if source:
             where_clauses.append("source = ?")
             params.append(source)
+
+        if agent:
+            where_clauses.append("agent = ?")
+            params.append(agent)
 
         where_clause = ""
         if where_clauses:

@@ -31,6 +31,9 @@ def render_section(mem: Memory, details: Optional[str] = None) -> str:
     if mem.source is not None:
         lines.append(f"**Source:** {mem.source}")
 
+    if mem.agent is not None:
+        lines.append(f"**Agent:** {mem.agent}")
+
     if details is not None:
         lines.append("")
         lines.append("<details>")

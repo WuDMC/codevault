@@ -11,11 +11,13 @@ class MemoryDBLike(Protocol):
     def fts_search(
         self, query: str, limit: int = 10,
         project: Optional[str] = None, source: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> list[dict]: ...
 
     def vector_search(
         self, query_embedding: list[float], limit: int = 10,
         project: Optional[str] = None, source: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> list[dict]: ...
 
 
@@ -76,6 +78,7 @@ def tiered_search(
     min_fts_results: int = 3,
     project: Optional[str] = None,
     source: Optional[str] = None,
+    agent: Optional[str] = None,
 ) -> list[dict]:
     """FTS-first tiered search that only calls embed when FTS results are sparse.
 
@@ -90,11 +93,12 @@ def tiered_search(
         min_fts_results: Minimum FTS results before skipping embedding (default 3)
         project: Optional project filter
         source: Optional source filter
+        agent: Optional agent role filter
 
     Returns:
         Search results sorted by score descending
     """
-    fts_results = db.fts_search(query, limit=limit * 2, project=project, source=source)
+    fts_results = db.fts_search(query, limit=limit * 2, project=project, source=source, agent=agent)
 
     # Normalize FTS scores to 0-1
     if fts_results:
@@ -114,7 +118,7 @@ def tiered_search(
     try:
         query_vec = embedding_provider.embed(query)
         vec_results = db.vector_search(
-            query_vec, limit=limit * 2, project=project, source=source
+            query_vec, limit=limit * 2, project=project, source=source, agent=agent
         )
         # FTS scores already normalized (max=1.0); merge_results re-normalizes
         # which is a no-op on 0-1 scores.
@@ -131,6 +135,7 @@ def hybrid_search(
     limit: int = 5,
     project: Optional[str] = None,
     source: Optional[str] = None,
+    agent: Optional[str] = None,
 ) -> list[dict]:
     """Run FTS5 and optionally vector search, merge results.
 
@@ -143,11 +148,12 @@ def hybrid_search(
         limit: Maximum number of results to return
         project: Optional project filter
         source: Optional source filter
+        agent: Optional agent role filter
 
     Returns:
         Merged and re-ranked search results
     """
-    fts_results = db.fts_search(query, limit=limit * 2, project=project, source=source)
+    fts_results = db.fts_search(query, limit=limit * 2, project=project, source=source, agent=agent)
 
     if embedding_provider is None:
         # FTS-only mode: normalize scores and return directly
@@ -159,6 +165,6 @@ def hybrid_search(
 
     query_vec = embedding_provider.embed(query)
     vec_results = db.vector_search(
-        query_vec, limit=limit * 2, project=project, source=source
+        query_vec, limit=limit * 2, project=project, source=source, agent=agent
     )
     return merge_results(fts_results, vec_results, limit=limit)

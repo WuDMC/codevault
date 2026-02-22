@@ -148,7 +148,8 @@ def config_init(force):
 @click.option("--details", default=None, help="Extended details or context")
 @click.option("--details-file", default=None, help="Path to a file containing extended details")
 @click.option("--details-template", is_flag=True, default=False, help="Use a structured details template")
-@click.option("--source", default=None, help="Source of the memory")
+@click.option("--source", default=None, help="Source of the memory (client/IDE)")
+@click.option("--agent", default=None, help="Agent role (architect, developer, reviewer, etc.)")
 @click.option("--project", default=None, help="Project name")
 def save(
     title,
@@ -162,6 +163,7 @@ def save(
     details_file,
     details_template,
     source,
+    agent,
     project,
 ):
     """Save a memory to the current session."""
@@ -193,6 +195,7 @@ def save(
         related_files=file_list,
         details=resolved_details,
         source=source,
+        agent=agent,
     )
 
     svc = MemoryService()
@@ -214,13 +217,14 @@ def save(
     default=False,
     help="Filter to current project (current directory name)",
 )
-@click.option("--source", default=None, help="Filter by source")
-def search(query, limit, project, source):
+@click.option("--source", default=None, help="Filter by source (client/IDE)")
+@click.option("--agent", default=None, help="Filter by agent role")
+def search(query, limit, project, source, agent):
     """Search memories using hybrid FTS5 + semantic search."""
     project_name = os.path.basename(os.getcwd()) if project else None
 
     svc = MemoryService()
-    results = svc.search(query, limit=limit, project=project_name, source=source)
+    results = svc.search(query, limit=limit, project=project_name, source=source, agent=agent)
     svc.close()
 
     if not results:
@@ -286,7 +290,8 @@ def delete(memory_id):
     default=False,
     help="Filter to current project (current directory name)",
 )
-@click.option("--source", default=None, help="Filter by source")
+@click.option("--source", default=None, help="Filter by source (client/IDE)")
+@click.option("--agent", default=None, help="Filter by agent role")
 @click.option("--limit", default=10, help="Maximum number of pointers")
 @click.option("--query", default=None, help="Semantic search query for filtering")
 @click.option(
@@ -315,7 +320,7 @@ def delete(memory_id):
     default="hook",
     help="Output format",
 )
-def context(project, source, limit, query, semantic_mode, show_config, output_format):
+def context(project, source, agent, limit, query, semantic_mode, show_config, output_format):
     """Output memory pointers for agent context injection."""
     import json
 
@@ -334,6 +339,7 @@ def context(project, source, limit, query, semantic_mode, show_config, output_fo
         limit=limit,
         project=project_name,
         source=source,
+        agent=agent,
         query=query,
         semantic_mode=semantic_mode,
     )

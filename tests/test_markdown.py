@@ -24,6 +24,7 @@ def sample_memory() -> Memory:
         category="decision",
         project="my-project",
         source="claude-code",
+        agent=None,
         related_files=["/src/api/main.py"],
         file_path="2026-01-22-session.md",
         section_anchor="use-fastapi-for-api-endpoints",
@@ -45,6 +46,7 @@ def minimal_memory() -> Memory:
         category="context",
         project="my-project",
         source=None,
+        agent=None,
         related_files=[],
         file_path="2026-01-22-session.md",
         section_anchor="basic-memory",
@@ -142,7 +144,7 @@ class TestWriteSessionMemory:
             category="decision",
             project="my-project",
             source="claude-code",
-            related_files=[],
+            agent=None, related_files=[],
             file_path="2026-01-22-session.md",
             section_anchor="another-decision",
             created_at="2026-01-22T15:00:00Z",
@@ -177,7 +179,7 @@ class TestWriteSessionMemory:
             category="bug",
             project="my-project",
             source="claude-code",
-            related_files=[],
+            agent=None, related_files=[],
             file_path="2026-01-22-session.md",
             section_anchor="bug-fix-description",
             created_at="2026-01-22T15:30:00Z",
@@ -213,7 +215,7 @@ class TestWriteSessionMemory:
             category="pattern",
             project="my-project",
             source="claude-code",
-            related_files=[],
+            agent=None, related_files=[],
             file_path="2026-01-22-session.md",
             section_anchor="new-pattern",
             created_at="2026-01-22T16:00:00Z",
@@ -243,6 +245,7 @@ class TestWriteSessionMemory:
             category="context",
             project="my-project",
             source="user",
+            agent=None,
             related_files=[],
             file_path="2026-01-22-session.md",
             section_anchor="manual-entry",
@@ -274,21 +277,21 @@ class TestWriteSessionMemory:
         learning_mem = Memory(
             id="l1", title="L", what="Learning", why=None, impact=None,
             tags=[], category="learning", project="my-project", source="claude-code",
-            related_files=[], file_path="", section_anchor="l",
+            agent=None, related_files=[], file_path="", section_anchor="l",
             created_at="2026-01-22T10:00:00Z", updated_at="2026-01-22T10:00:00Z",
         )
 
         decision_mem = Memory(
             id="d1", title="D", what="Decision", why=None, impact=None,
             tags=[], category="decision", project="my-project", source="claude-code",
-            related_files=[], file_path="", section_anchor="d",
+            agent=None, related_files=[], file_path="", section_anchor="d",
             created_at="2026-01-22T10:00:00Z", updated_at="2026-01-22T10:00:00Z",
         )
 
         pattern_mem = Memory(
             id="p1", title="P", what="Pattern", why=None, impact=None,
             tags=[], category="pattern", project="my-project", source="claude-code",
-            related_files=[], file_path="", section_anchor="p",
+            agent=None, related_files=[], file_path="", section_anchor="p",
             created_at="2026-01-22T10:00:00Z", updated_at="2026-01-22T10:00:00Z",
         )
 
