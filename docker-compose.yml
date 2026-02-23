@@ -73,6 +73,7 @@ services:
       - "5050:80"  # Web UI via Nginx: https://pgadmin.wudmc.com
     volumes:
       - pgadmin-data:/var/lib/pgadmin
+      - ./pgadmin-servers.json:/pgadmin4/servers.json:ro
     networks:
       - memory-network
     depends_on:

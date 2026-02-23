@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "CodeVault PostgreSQL",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "memory",
+      "Username": "postgres",
+      "SSLMode": "prefer"
+    }
+  }
+}
