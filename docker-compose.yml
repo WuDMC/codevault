@@ -1,3 +1,5 @@
+version: "3.8"
+
 services:
   # PostgreSQL — отдельный сервис
   # Может использоваться ЛЮБЫМИ приложениями, не только memory server
@@ -59,11 +61,12 @@ services:
     container_name: memory-pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
-      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_PROXY_X_HOST_COUNT: '1'
+      PGADMIN_CONFIG_PROXY_X_PREFIX_COUNT: '1'
     ports:
-      - "5050:80"  # Web UI: http://localhost:5050
+      - "5050:80"  # Web UI via Nginx: https://pgadmin.wudmc.com
     volumes:
       - pgadmin-data:/var/lib/pgadmin
     networks:
