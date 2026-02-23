@@ -3,7 +3,7 @@ name: codevault
 description: Local-first memory for coding agents. You MUST retrieve memories at session start and save memories before session end. This is not optional.
 ---
 
-# EchoVault — Agent Memory System
+# CodeVault — Agent Memory System
 
 You have persistent memory across sessions. USE IT.
 
@@ -11,20 +11,20 @@ You have persistent memory across sessions. USE IT.
 
 Before doing ANY work, retrieve context from previous sessions:
 
-```bash
-memory context --project
+```
+memory_context(project="<current-project>", limit=10)
 ```
 
-If the user's request relates to a specific topic, also search for it:
+This returns full content (what, why, impact) for recent memories. If the user's request relates to a specific topic, also search:
 
-```bash
-memory search "<relevant terms>"
+```
+memory_search(query="<relevant terms>", project="<current-project>")
 ```
 
-When search results show "Details: available", fetch them:
+When results show `has_details=true`, fetch the extended body:
 
-```bash
-memory details <memory-id>
+```
+memory_details(memory_id="<id>")
 ```
 
 Do not skip this step. Prior sessions may contain decisions, bugs, and context that directly affect your current task.
@@ -33,30 +33,22 @@ Do not skip this step. Prior sessions may contain decisions, bugs, and context t
 
 Before ending your response to ANY task that involved making changes, debugging, deciding, or learning something, you MUST save a memory. This is not optional. If you did meaningful work, save it.
 
-```bash
-memory save \
-  --title "Short descriptive title" \
-  --what "What happened or was decided" \
-  --why "Reasoning behind it" \
-  --impact "What changed as a result" \
-  --tags "tag1,tag2,tag3" \
-  --category "<category>" \
-  --related-files "path/to/file1,path/to/file2" \
-  --source "claude-code" \
-  --details "Context:
-
-             Options considered:
-             - Option A
-             - Option B
-
-             Decision:
-             Tradeoffs:
-             Follow-up:"
+```
+memory_save(
+  title="Short descriptive title",
+  what="What happened or was decided",
+  why="Reasoning behind it",
+  impact="What changed as a result",
+  tags=["tag1", "tag2", "tag3"],
+  category="<category>",
+  related_files=["path/to/file1", "path/to/file2"],
+  project="<current-project>",
+  source="claude-code",
+  agent="developer"
+)
 ```
 
 Categories: `decision`, `bug`, `pattern`, `setup`, `learning`, `context`.
-
-Use `--source` to identify the agent: `claude-code`, `codex`, or `cursor`.
 
 ### What to save
 
