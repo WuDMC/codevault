@@ -233,6 +233,12 @@ class MemoryService:
         try:
             candidates = self.db.fts_search(dedup_query, limit=5, project=project)
         except Exception:
+            # Rollback aborted PG transaction before continuing
+            if hasattr(self.db, 'conn') and hasattr(self.db.conn, 'rollback'):
+                try:
+                    self.db.conn.rollback()
+                except Exception:
+                    pass
             candidates = []
 
         if candidates:
@@ -243,7 +249,11 @@ class MemoryService:
                 try:
                     broad = self.db.fts_search(dedup_query, limit=5) or broad
                 except Exception:
-                    pass
+                    if hasattr(self.db, 'conn') and hasattr(self.db.conn, 'rollback'):
+                        try:
+                            self.db.conn.rollback()
+                        except Exception:
+                            pass
             max_score = max(c["score"] for c in broad) if broad else 0.0
             top = candidates[0]
             normalized = top["score"] / max_score if max_score > 0 else 0.0
@@ -263,32 +273,41 @@ class MemoryService:
                 if raw.details:
                     details_append = f"--- updated {today} ---\n{raw.details}"
 
-                self.db.update_memory(
-                    memory_id=existing_id,
-                    what=raw.what,
-                    why=raw.why,
-                    impact=raw.impact,
-                    tags=merged_tags,
-                    details_append=details_append,
-                )
-
-                # Re-embed the updated memory (non-fatal)
                 try:
-                    embed_text = f"{top['title']} {raw.what} {raw.why or ''} {raw.impact or ''} {' '.join(merged_tags)}"
-                    embedding = self.embedding_provider.embed(embed_text)
-                    if self._ensure_vectors(embedding):
-                        rowid = self.db.get_rowid_by_memory_id(existing_id)
-                        if rowid:
-                            self.db.insert_vector(rowid, embedding)
+                    self.db.update_memory(
+                        memory_id=existing_id,
+                        what=raw.what,
+                        why=raw.why,
+                        impact=raw.impact,
+                        tags=merged_tags,
+                        details_append=details_append,
+                    )
                 except Exception:
-                    pass
+                    if hasattr(self.db, 'conn') and hasattr(self.db.conn, 'rollback'):
+                        try:
+                            self.db.conn.rollback()
+                        except Exception:
+                            pass
+                else:
+                    # Update succeeded — re-embed and return
+                    # Re-embed the updated memory (non-fatal)
+                    try:
+                        embed_text = f"{top['title']} {raw.what} {raw.why or ''} {raw.impact or ''} {' '.join(merged_tags)}"
+                        embedding = self.embedding_provider.embed(embed_text)
+                        if self._ensure_vectors(embedding):
+                            rowid = self.db.get_rowid_by_memory_id(existing_id)
+                            if rowid:
+                                self.db.insert_vector(rowid, embedding)
+                    except Exception:
+                        pass
 
-                return {
-                    "id": existing_id,
-                    "file_path": existing_file_path,
-                    "action": "updated",
-                    "warnings": warnings,
-                }
+                    return {
+                        "id": existing_id,
+                        "file_path": existing_file_path,
+                        "action": "updated",
+                        "warnings": warnings,
+                    }
+                # If update_memory failed, fall through to create new memory
 
         # --- Normal save path: create new memory ---
         # Create memory object with generated metadata
@@ -316,6 +335,11 @@ class MemoryService:
         except Exception as e:
             # Embedding failed (provider down, network error, etc.)
             # Memory is still saved to DB and markdown — just no vector
+            if hasattr(self.db, 'conn') and hasattr(self.db.conn, 'rollback'):
+                try:
+                    self.db.conn.rollback()
+                except Exception:
+                    pass
             print(
                 f"Warning: embedding failed ({e}). Memory saved without vector.",
                 file=sys.stderr,

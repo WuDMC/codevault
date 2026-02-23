@@ -40,6 +40,9 @@ class MemoryDBPostgres:
         # Register pgvector types
         register_vector(self.conn)
 
+        # Create schema if needed (only once per database, not every connection)
+        self._ensure_schema()
+
     def _safe_cursor(self, dict_cursor: bool = False):
         """Get a cursor, rolling back any aborted transaction first.
 
