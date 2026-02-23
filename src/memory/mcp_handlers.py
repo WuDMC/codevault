@@ -270,16 +270,24 @@ def create_mcp_server(service: MemoryService) -> Server:
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-        if name == "memory_save":
-            result = handle_memory_save(service, **arguments)
-        elif name == "memory_search":
-            result = handle_memory_search(service, **arguments)
-        elif name == "memory_context":
-            result = handle_memory_context(service, **arguments)
-        elif name == "memory_details":
-            result = handle_memory_details(service, **arguments)
-        else:
-            result = json.dumps({"error": f"Unknown tool: {name}"})
+        import sys
+        import traceback
+
+        try:
+            if name == "memory_save":
+                result = handle_memory_save(service, **arguments)
+            elif name == "memory_search":
+                result = handle_memory_search(service, **arguments)
+            elif name == "memory_context":
+                result = handle_memory_context(service, **arguments)
+            elif name == "memory_details":
+                result = handle_memory_details(service, **arguments)
+            else:
+                result = json.dumps({"error": f"Unknown tool: {name}"})
+        except Exception as e:
+            print(f"[ERROR] {name}: {e}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            result = json.dumps({"error": str(e)})
 
         return [TextContent(type="text", text=result)]
 
