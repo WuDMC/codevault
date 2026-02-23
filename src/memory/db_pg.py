@@ -740,7 +740,8 @@ class MemoryDBPostgres:
             params.append(limit)
 
             cursor.execute(f"""
-                SELECT m.memory_id as id, m.title, m.category, m.tags, m.project, m.source, m.created_at,
+                SELECT m.memory_id as id, m.title, m.what, m.why, m.impact,
+                       m.category, m.tags, m.project, m.source, m.created_at,
                        EXISTS(SELECT 1 FROM memory_details WHERE user_id = m.user_id AND memory_id = m.memory_id) as has_details
                 FROM memories m
                 WHERE {where_clause}

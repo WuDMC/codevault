@@ -35,13 +35,13 @@ When filling `details`, prefer this structure:
 - Tradeoffs
 - Follow-up"""
 
-SEARCH_DESCRIPTION = """Search memories using keyword and semantic search. Returns matching memories ranked by relevance. You MUST call this at session start before doing any work, and whenever the user's request relates to a topic that may have prior context."""
+SEARCH_DESCRIPTION = """Search memories by keyword and semantic similarity. Use this to find specific memories across all projects and history. Supports filtering by project, source, and agent role. Use when you need something beyond the recent context — e.g. a memory from another project, an old decision, or a specific topic."""
 
-CONTEXT_DESCRIPTION = """Get memory context for the current project. You MUST call this at session start to load prior decisions, bugs, and context. Do not skip this step — prior sessions contain decisions and context that directly affect your current task.
+CONTEXT_DESCRIPTION = """Load recent memories for the current project. You MUST call this at session start before doing any work. Returns full content (what, why, impact) so you have all prior decisions and context.
 
-After getting context, call memory_search with relevant keywords to get full content (what, why, impact) for memories related to your current task. Context only returns titles and metadata — search returns the actual content."""
+If a memory has has_details=true, call memory_details to get the extended body. Use memory_search when you need to find something outside this project or beyond the recent limit."""
 
-DETAILS_DESCRIPTION = """Get full details for a specific memory by ID. Only call this if has_details is true for a memory returned by memory_search or memory_context. If has_details is false or missing, do NOT call this — the memory has no extended details."""
+DETAILS_DESCRIPTION = """Get extended details for a specific memory by ID. Only call this when has_details is true in a result from memory_context or memory_search. If has_details is false, do NOT call this — the memory has no extended details."""
 
 
 def _normalize_tags(tags_raw) -> list[str]:
@@ -157,6 +157,9 @@ def handle_memory_context(
         memories.append({
             "id": r["id"],
             "title": r.get("title", "Untitled"),
+            "what": r.get("what", ""),
+            "why": r.get("why"),
+            "impact": r.get("impact"),
             "category": r.get("category", ""),
             "tags": tags_list,
             "date": date_display,
@@ -167,7 +170,7 @@ def handle_memory_context(
         "total": total,
         "showing": len(memories),
         "memories": memories,
-        "message": "Use memory_search for specific topics. IMPORTANT: You MUST call memory_save before this session ends if you make any changes, decisions, or discoveries.",
+        "message": "IMPORTANT: You MUST call memory_save before this session ends if you make any changes, decisions, or discoveries.",
     })
 
 

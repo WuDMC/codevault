@@ -578,7 +578,8 @@ class MemoryDB:
 
         cursor = self.conn.cursor()
         cursor.execute(f"""
-            SELECT m.id, m.title, m.category, m.tags, m.project, m.source, m.created_at,
+            SELECT m.id, m.title, m.what, m.why, m.impact,
+                   m.category, m.tags, m.project, m.source, m.created_at,
                    EXISTS(SELECT 1 FROM memory_details WHERE memory_id = m.id) as has_details
             FROM memories m
             {where_clause}
