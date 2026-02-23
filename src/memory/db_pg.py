@@ -40,12 +40,23 @@ class MemoryDBPostgres:
         # Register pgvector types
         register_vector(self.conn)
 
+    def _safe_cursor(self):
+        """Get a cursor, rolling back any aborted transaction first."""
+        if self.conn.closed:
+            self.conn = psycopg2.connect(self.db_url)
+            self.conn.autocommit = False
+            register_vector(self.conn)
+        # psycopg2 status: 0=ready, 1=in_transaction, 4=in_error
+        if self.conn.info.transaction_status == 4:
+            self.conn.rollback()
+        return self.conn.cursor()
+
         # Create schema if needed (only once per database, not every connection)
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
         """Create schema only if tables don't exist yet."""
-        cursor = self.conn.cursor()
+        cursor = self._safe_cursor()
         cursor.execute("""
             SELECT EXISTS (
                 SELECT 1 FROM information_schema.tables
@@ -58,7 +69,7 @@ class MemoryDBPostgres:
 
     def _create_schema(self) -> None:
         """Create database tables and indexes if they don't exist."""
-        cursor = self.conn.cursor()
+        cursor = self._safe_cursor()
 
         # Enable extensions (requires superuser on first run)
         cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
@@ -207,7 +218,7 @@ class MemoryDBPostgres:
 
     def drop_vec_table(self) -> None:
         """Drop and recreate the vector index."""
-        cursor = self.conn.cursor()
+        cursor = self._safe_cursor()
         cursor.execute("DROP INDEX IF EXISTS idx_memories_embedding")
         cursor.execute("UPDATE memories SET embedding = NULL WHERE user_id = %s", (self.user_id,))
         self.conn.commit()
@@ -218,7 +229,7 @@ class MemoryDBPostgres:
         Args:
             dim: Embedding dimension (used for compatibility, PG column is fixed)
         """
-        cursor = self.conn.cursor()
+        cursor = self._safe_cursor()
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_memories_embedding
             ON memories USING hnsw (embedding vector_cosine_ops)
@@ -237,7 +248,7 @@ class MemoryDBPostgres:
         """
         if not self.user_id:
             return None
-        cursor = self.conn.cursor()
+        cursor = self._safe_cursor()
         cursor.execute("""
             SELECT id FROM memories
             WHERE user_id = %s AND memory_id LIKE %s
@@ -292,32 +303,35 @@ class MemoryDBPostgres:
         if not self.user_id:
             raise ValueError("user_id required for insert_memory")
 
-        cursor = self.conn.cursor()
-
-        cursor.execute("""
-            INSERT INTO memories (
-                user_id, memory_id, title, what, why, impact, tags, category, project,
-                source, agent, related_files, file_path, section_anchor, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-        """, (
-            self.user_id, mem.id, mem.title, mem.what, mem.why, mem.impact,
-            mem.tags, mem.category, mem.project, mem.source, mem.agent,
-            mem.related_files, mem.file_path, mem.section_anchor,
-            mem.created_at, mem.updated_at
-        ))
-
-        rowid = cursor.fetchone()[0]
-
-        # Insert details if provided
-        if details:
+        cursor = self._safe_cursor()
+        try:
             cursor.execute("""
-                INSERT INTO memory_details (user_id, memory_id, body)
-                VALUES (%s, %s, %s)
-            """, (self.user_id, mem.id, details))
+                INSERT INTO memories (
+                    user_id, memory_id, title, what, why, impact, tags, category, project,
+                    source, agent, related_files, file_path, section_anchor, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                self.user_id, mem.id, mem.title, mem.what, mem.why, mem.impact,
+                mem.tags, mem.category, mem.project, mem.source, mem.agent,
+                mem.related_files, mem.file_path, mem.section_anchor,
+                mem.created_at, mem.updated_at
+            ))
 
-        self.conn.commit()
-        return rowid
+            rowid = cursor.fetchone()[0]
+
+            # Insert details if provided
+            if details:
+                cursor.execute("""
+                    INSERT INTO memory_details (user_id, memory_id, body)
+                    VALUES (%s, %s, %s)
+                """, (self.user_id, mem.id, details))
+
+            self.conn.commit()
+            return rowid
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def insert_vector(self, rowid: int, embedding: list[float]) -> None:
         """Insert/update embedding vector for a memory.
@@ -329,14 +343,18 @@ class MemoryDBPostgres:
         if not self.user_id:
             return
 
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            UPDATE memories
-            SET embedding = %s
-            WHERE id = %s AND user_id = %s
-        """, (embedding, rowid, self.user_id))
+        cursor = self._safe_cursor()
+        try:
+            cursor.execute("""
+                UPDATE memories
+                SET embedding = %s
+                WHERE id = %s AND user_id = %s
+            """, (embedding, rowid, self.user_id))
 
-        self.conn.commit()
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def get_memory(self, memory_id: str) -> Optional[dict]:
         """Get a memory by ID.
@@ -412,7 +430,7 @@ class MemoryDBPostgres:
         if not self.user_id:
             return False
 
-        cursor = self.conn.cursor()
+        cursor = self._safe_cursor()
 
         # Resolve full ID from prefix
         cursor.execute("""
@@ -484,7 +502,7 @@ class MemoryDBPostgres:
         if not self.user_id:
             return False
 
-        cursor = self.conn.cursor()
+        cursor = self._safe_cursor()
 
         # Resolve full ID
         cursor.execute("""
@@ -708,7 +726,7 @@ class MemoryDBPostgres:
         if not self.user_id:
             return 0
 
-        cursor = self.conn.cursor()
+        cursor = self._safe_cursor()
 
         where_clauses = ["user_id = %s"]
         params = [self.user_id]
@@ -743,7 +761,7 @@ class MemoryDBPostgres:
         if not self.user_id:
             return
 
-        cursor = self.conn.cursor()
+        cursor = self._safe_cursor()
         cursor.execute("""
             INSERT INTO meta (user_id, key, value)
             VALUES (%s, %s, %s)
@@ -763,7 +781,7 @@ class MemoryDBPostgres:
         if not self.user_id:
             return None
 
-        cursor = self.conn.cursor()
+        cursor = self._safe_cursor()
         cursor.execute("""
             SELECT value FROM meta
             WHERE user_id = %s AND key = %s
@@ -789,7 +807,7 @@ class MemoryDBPostgres:
         Returns:
             Tuple of (user_id, token)
         """
-        cursor = self.conn.cursor()
+        cursor = self._safe_cursor()
         cursor.execute("""
             INSERT INTO users (name)
             VALUES (%s)
