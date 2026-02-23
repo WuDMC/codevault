@@ -40,8 +40,15 @@ class MemoryDBPostgres:
         # Register pgvector types
         register_vector(self.conn)
 
-    def _safe_cursor(self):
-        """Get a cursor, rolling back any aborted transaction first."""
+    def _safe_cursor(self, dict_cursor: bool = False):
+        """Get a cursor, rolling back any aborted transaction first.
+
+        Args:
+            dict_cursor: If True, return a RealDictCursor for dict-style access
+
+        Returns:
+            A psycopg2 cursor
+        """
         if self.conn.closed:
             self.conn = psycopg2.connect(self.db_url)
             self.conn.autocommit = False
@@ -49,10 +56,9 @@ class MemoryDBPostgres:
         # psycopg2 status: 0=ready, 1=in_transaction, 4=in_error
         if self.conn.info.transaction_status == 4:
             self.conn.rollback()
+        if dict_cursor:
+            return self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         return self.conn.cursor()
-
-        # Create schema if needed (only once per database, not every connection)
-        self._ensure_schema()
 
     def _ensure_schema(self) -> None:
         """Create schema only if tables don't exist yet."""
@@ -368,7 +374,7 @@ class MemoryDBPostgres:
         if not self.user_id:
             return None
 
-        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor = self._safe_cursor(dict_cursor=True)
         cursor.execute("""
             SELECT m.*,
                    EXISTS(SELECT 1 FROM memory_details WHERE user_id = m.user_id AND memory_id = m.memory_id) as has_details
@@ -393,7 +399,7 @@ class MemoryDBPostgres:
         if not self.user_id:
             return None
 
-        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor = self._safe_cursor(dict_cursor=True)
         cursor.execute("""
             SELECT memory_id, body
             FROM memory_details
@@ -549,7 +555,7 @@ class MemoryDBPostgres:
         if not self.user_id:
             return []
 
-        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor = self._safe_cursor(dict_cursor=True)
 
         where_clauses = ["m.user_id = %s"]
         params = [self.user_id]
@@ -605,7 +611,7 @@ class MemoryDBPostgres:
         if not self.user_id:
             return []
 
-        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor = self._safe_cursor(dict_cursor=True)
 
         where_clauses = ["m.user_id = %s", "m.embedding IS NOT NULL"]
         params = [self.user_id]
@@ -658,7 +664,7 @@ class MemoryDBPostgres:
         if not self.user_id:
             return []
 
-        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor = self._safe_cursor(dict_cursor=True)
 
         where_clauses = ["m.user_id = %s"]
         params = [self.user_id]
@@ -698,7 +704,7 @@ class MemoryDBPostgres:
         if not self.user_id:
             return []
 
-        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor = self._safe_cursor(dict_cursor=True)
         cursor.execute("""
             SELECT id as rowid, title, what, why, impact, tags
             FROM memories
@@ -823,7 +829,7 @@ class MemoryDBPostgres:
         Returns:
             List of user dicts
         """
-        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor = self._safe_cursor(dict_cursor=True)
         cursor.execute("""
             SELECT id, name, created_at
             FROM users
@@ -840,7 +846,7 @@ class MemoryDBPostgres:
         Returns:
             User dict or None
         """
-        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor = self._safe_cursor(dict_cursor=True)
         cursor.execute("""
             SELECT id, name, created_at
             FROM users
