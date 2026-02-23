@@ -664,15 +664,20 @@ def mcp(transport, port, host):
         async def handle_sse(request: Request):
             # Token-based auth for multi-user mode
             auth_header = request.headers.get("Authorization", "")
+            click.echo(f"[AUTH] SSE request from {request.client.host}, Authorization: {'present' if auth_header else 'MISSING'}")
             token = None
             if auth_header.startswith("Bearer "):
                 token = auth_header[7:]
+                click.echo(f"[AUTH] Token: {token[:8]}...")
 
             user_id = None
             if token and config.storage.backend == "postgresql":
                 user_id = resolve_user_id_from_token(token)
+                click.echo(f"[AUTH] Resolved user_id: {user_id}")
                 if not user_id:
                     return JSONResponse({"error": "Invalid token"}, status_code=401)
+            elif not token:
+                click.echo("[AUTH] WARNING: No token provided, user_id will be None")
 
             server, service = create_server(user_id=user_id)
 
