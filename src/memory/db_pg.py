@@ -593,22 +593,27 @@ class MemoryDBPostgres:
         cursor = self._safe_cursor(dict_cursor=True)
         try:
             where_clauses = ["m.user_id = %s"]
-            params = [self.user_id]
+            where_params = [self.user_id]
 
             if project:
                 where_clauses.append("m.project = %s")
-                params.append(project)
+                where_params.append(project)
 
             if source:
                 where_clauses.append("m.source = %s")
-                params.append(source)
+                where_params.append(source)
 
             if agent:
                 where_clauses.append("m.agent = %s")
-                params.append(agent)
+                where_params.append(agent)
 
             where_clause = " AND ".join(where_clauses)
-            params.extend([query, query, limit])
+            # Param order must match SQL %s order:
+            # 1. ts_rank(plainto_tsquery) in SELECT
+            # 2. WHERE clauses (user_id, project?, source?, agent?)
+            # 3. fts @@ plainto_tsquery in WHERE
+            # 4. LIMIT
+            params = [query] + where_params + [query, limit]
 
             cursor.execute(f"""
                 SELECT m.*,
@@ -654,22 +659,27 @@ class MemoryDBPostgres:
         cursor = self._safe_cursor(dict_cursor=True)
         try:
             where_clauses = ["m.user_id = %s", "m.embedding IS NOT NULL"]
-            params = [self.user_id]
+            where_params = [self.user_id]
 
             if project:
                 where_clauses.append("m.project = %s")
-                params.append(project)
+                where_params.append(project)
 
             if source:
                 where_clauses.append("m.source = %s")
-                params.append(source)
+                where_params.append(source)
 
             if agent:
                 where_clauses.append("m.agent = %s")
-                params.append(agent)
+                where_params.append(agent)
 
             where_clause = " AND ".join(where_clauses)
-            params.extend([query_embedding, query_embedding, limit])
+            # Param order must match SQL %s order:
+            # 1. (m.embedding <=> %s) in SELECT
+            # 2. WHERE clauses (user_id, project?, source?, agent?)
+            # 3. ORDER BY m.embedding <=> %s
+            # 4. LIMIT
+            params = [query_embedding] + where_params + [query_embedding, limit]
 
             cursor.execute(f"""
                 SELECT m.*,
