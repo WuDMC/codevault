@@ -37,9 +37,11 @@ When filling `details`, prefer this structure:
 
 SEARCH_DESCRIPTION = """Search memories using keyword and semantic search. Returns matching memories ranked by relevance. You MUST call this at session start before doing any work, and whenever the user's request relates to a topic that may have prior context."""
 
-CONTEXT_DESCRIPTION = """Get memory context for the current project. You MUST call this at session start to load prior decisions, bugs, and context. Do not skip this step — prior sessions contain decisions and context that directly affect your current task. Use memory_search for specific topics."""
+CONTEXT_DESCRIPTION = """Get memory context for the current project. You MUST call this at session start to load prior decisions, bugs, and context. Do not skip this step — prior sessions contain decisions and context that directly affect your current task.
 
-DETAILS_DESCRIPTION = """Get full details for a specific memory by ID. Use this after memory_search or memory_context returns a memory with has_details=true. Details contain the full context, options considered, decision reasoning, and follow-up items."""
+After getting context, call memory_search with relevant keywords to get full content (what, why, impact) for memories related to your current task. Context only returns titles and metadata — search returns the actual content."""
+
+DETAILS_DESCRIPTION = """Get full details for a specific memory by ID. Only call this if has_details is true for a memory returned by memory_search or memory_context. If has_details is false or missing, do NOT call this — the memory has no extended details."""
 
 
 def _normalize_tags(tags_raw) -> list[str]:
@@ -158,6 +160,7 @@ def handle_memory_context(
             "category": r.get("category", ""),
             "tags": tags_list,
             "date": date_display,
+            "has_details": bool(r.get("has_details")),
         })
 
     return json.dumps({

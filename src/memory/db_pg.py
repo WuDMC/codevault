@@ -56,9 +56,13 @@ class MemoryDBPostgres:
             self.conn = psycopg2.connect(self.db_url)
             self.conn.autocommit = False
             register_vector(self.conn)
-        # psycopg2 status: 0=ready, 1=in_transaction, 4=in_error
-        if self.conn.info.transaction_status == 4:
+        # psycopg2 transaction_status: 0=IDLE, 1=IN_TRANSACTION, 4=IN_ERROR
+        status = self.conn.info.transaction_status
+        if status == 4:
             self.conn.rollback()
+        elif status == 1:
+            # Commit any idle-in-transaction to keep connection clean
+            self.conn.commit()
         if dict_cursor:
             return self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         return self.conn.cursor()
@@ -66,15 +70,20 @@ class MemoryDBPostgres:
     def _ensure_schema(self) -> None:
         """Create schema only if tables don't exist yet."""
         cursor = self._safe_cursor()
-        cursor.execute("""
-            SELECT EXISTS (
-                SELECT 1 FROM information_schema.tables
-                WHERE table_name = 'memories'
-            )
-        """)
-        exists = cursor.fetchone()[0]
-        if not exists:
-            self._create_schema()
+        try:
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = 'memories'
+                )
+            """)
+            exists = cursor.fetchone()[0]
+            self.conn.commit()
+            if not exists:
+                self._create_schema()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def _create_schema(self) -> None:
         """Create database tables and indexes if they don't exist."""
@@ -258,12 +267,17 @@ class MemoryDBPostgres:
         if not self.user_id:
             return None
         cursor = self._safe_cursor()
-        cursor.execute("""
-            SELECT id FROM memories
-            WHERE user_id = %s AND memory_id LIKE %s
-        """, (self.user_id, memory_id + "%"))
-        row = cursor.fetchone()
-        return row[0] if row else None
+        try:
+            cursor.execute("""
+                SELECT id FROM memories
+                WHERE user_id = %s AND memory_id LIKE %s
+            """, (self.user_id, memory_id + "%"))
+            row = cursor.fetchone()
+            self.conn.commit()
+            return row[0] if row else None
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def get_embedding_dim(self) -> Optional[int]:
         """Get stored embedding dimension from meta table.
@@ -378,17 +392,22 @@ class MemoryDBPostgres:
             return None
 
         cursor = self._safe_cursor(dict_cursor=True)
-        cursor.execute("""
-            SELECT m.*,
-                   EXISTS(SELECT 1 FROM memory_details WHERE user_id = m.user_id AND memory_id = m.memory_id) as has_details
-            FROM memories m
-            WHERE m.user_id = %s AND m.memory_id = %s
-        """, (self.user_id, memory_id))
+        try:
+            cursor.execute("""
+                SELECT m.*,
+                       EXISTS(SELECT 1 FROM memory_details WHERE user_id = m.user_id AND memory_id = m.memory_id) as has_details
+                FROM memories m
+                WHERE m.user_id = %s AND m.memory_id = %s
+            """, (self.user_id, memory_id))
 
-        row = cursor.fetchone()
-        if row:
-            return _normalize_row(row)
-        return None
+            row = cursor.fetchone()
+            self.conn.commit()
+            if row:
+                return _normalize_row(row)
+            return None
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def get_details(self, memory_id: str) -> Optional[MemoryDetail]:
         """Get full details for a memory.
@@ -403,16 +422,21 @@ class MemoryDBPostgres:
             return None
 
         cursor = self._safe_cursor(dict_cursor=True)
-        cursor.execute("""
-            SELECT memory_id, body
-            FROM memory_details
-            WHERE user_id = %s AND memory_id LIKE %s
-        """, (self.user_id, memory_id + "%"))
+        try:
+            cursor.execute("""
+                SELECT memory_id, body
+                FROM memory_details
+                WHERE user_id = %s AND memory_id LIKE %s
+            """, (self.user_id, memory_id + "%"))
 
-        row = cursor.fetchone()
-        if row:
-            return MemoryDetail(memory_id=row["memory_id"], body=row["body"])
-        return None
+            row = cursor.fetchone()
+            self.conn.commit()
+            if row:
+                return MemoryDetail(memory_id=row["memory_id"], body=row["body"])
+            return None
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def update_memory(
         self,
@@ -440,64 +464,68 @@ class MemoryDBPostgres:
             return False
 
         cursor = self._safe_cursor()
-
-        # Resolve full ID from prefix
-        cursor.execute("""
-            SELECT memory_id, id FROM memories
-            WHERE user_id = %s AND memory_id LIKE %s
-        """, (self.user_id, memory_id + "%"))
-        row = cursor.fetchone()
-        if not row:
-            return False
-
-        full_id = row[0]
-        rowid = row[1]
-
-        # Build UPDATE query dynamically
-        from datetime import datetime, timezone
-        sets = ["updated_count = updated_count + 1", "updated_at = %s"]
-        params = [datetime.now(timezone.utc).isoformat()]
-
-        if what is not None:
-            sets.append("what = %s")
-            params.append(what)
-        if why is not None:
-            sets.append("why = %s")
-            params.append(why)
-        if impact is not None:
-            sets.append("impact = %s")
-            params.append(impact)
-        if tags is not None:
-            sets.append("tags = %s")
-            params.append(tags)
-
-        params.extend([self.user_id, full_id])
-        cursor.execute(
-            f"UPDATE memories SET {', '.join(sets)} WHERE user_id = %s AND memory_id = %s",
-            params
-        )
-
-        # Handle details append
-        if details_append:
+        try:
+            # Resolve full ID from prefix
             cursor.execute("""
-                SELECT body FROM memory_details
-                WHERE user_id = %s AND memory_id = %s
-            """, (self.user_id, full_id))
-            existing = cursor.fetchone()
-            if existing:
-                new_body = existing[0] + "\n\n" + details_append
-                cursor.execute("""
-                    UPDATE memory_details SET body = %s
-                    WHERE user_id = %s AND memory_id = %s
-                """, (new_body, self.user_id, full_id))
-            else:
-                cursor.execute("""
-                    INSERT INTO memory_details (user_id, memory_id, body)
-                    VALUES (%s, %s, %s)
-                """, (self.user_id, full_id, details_append))
+                SELECT memory_id, id FROM memories
+                WHERE user_id = %s AND memory_id LIKE %s
+            """, (self.user_id, memory_id + "%"))
+            row = cursor.fetchone()
+            if not row:
+                self.conn.commit()
+                return False
 
-        self.conn.commit()
-        return True
+            full_id = row[0]
+            rowid = row[1]
+
+            # Build UPDATE query dynamically
+            from datetime import datetime, timezone
+            sets = ["updated_count = updated_count + 1", "updated_at = %s"]
+            params = [datetime.now(timezone.utc).isoformat()]
+
+            if what is not None:
+                sets.append("what = %s")
+                params.append(what)
+            if why is not None:
+                sets.append("why = %s")
+                params.append(why)
+            if impact is not None:
+                sets.append("impact = %s")
+                params.append(impact)
+            if tags is not None:
+                sets.append("tags = %s")
+                params.append(tags)
+
+            params.extend([self.user_id, full_id])
+            cursor.execute(
+                f"UPDATE memories SET {', '.join(sets)} WHERE user_id = %s AND memory_id = %s",
+                params
+            )
+
+            # Handle details append
+            if details_append:
+                cursor.execute("""
+                    SELECT body FROM memory_details
+                    WHERE user_id = %s AND memory_id = %s
+                """, (self.user_id, full_id))
+                existing = cursor.fetchone()
+                if existing:
+                    new_body = existing[0] + "\n\n" + details_append
+                    cursor.execute("""
+                        UPDATE memory_details SET body = %s
+                        WHERE user_id = %s AND memory_id = %s
+                    """, (new_body, self.user_id, full_id))
+                else:
+                    cursor.execute("""
+                        INSERT INTO memory_details (user_id, memory_id, body)
+                        VALUES (%s, %s, %s)
+                    """, (self.user_id, full_id, details_append))
+
+            self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def delete_memory(self, memory_id: str) -> bool:
         """Delete a memory by ID or prefix.
@@ -512,28 +540,32 @@ class MemoryDBPostgres:
             return False
 
         cursor = self._safe_cursor()
+        try:
+            # Resolve full ID
+            cursor.execute("""
+                SELECT memory_id FROM memories
+                WHERE user_id = %s AND memory_id LIKE %s
+            """, (self.user_id, memory_id + "%"))
+            row = cursor.fetchone()
+            if not row:
+                self.conn.commit()
+                return False
 
-        # Resolve full ID
-        cursor.execute("""
-            SELECT memory_id FROM memories
-            WHERE user_id = %s AND memory_id LIKE %s
-        """, (self.user_id, memory_id + "%"))
-        row = cursor.fetchone()
-        if not row:
-            return False
+            full_id = row[0]
+            cursor.execute("""
+                DELETE FROM memory_details
+                WHERE user_id = %s AND memory_id = %s
+            """, (self.user_id, full_id))
+            cursor.execute("""
+                DELETE FROM memories
+                WHERE user_id = %s AND memory_id = %s
+            """, (self.user_id, full_id))
 
-        full_id = row[0]
-        cursor.execute("""
-            DELETE FROM memory_details
-            WHERE user_id = %s AND memory_id = %s
-        """, (self.user_id, full_id))
-        cursor.execute("""
-            DELETE FROM memories
-            WHERE user_id = %s AND memory_id = %s
-        """, (self.user_id, full_id))
-
-        self.conn.commit()
-        return True
+            self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def fts_search(
         self,
@@ -559,37 +591,42 @@ class MemoryDBPostgres:
             return []
 
         cursor = self._safe_cursor(dict_cursor=True)
+        try:
+            where_clauses = ["m.user_id = %s"]
+            params = [self.user_id]
 
-        where_clauses = ["m.user_id = %s"]
-        params = [self.user_id]
+            if project:
+                where_clauses.append("m.project = %s")
+                params.append(project)
 
-        if project:
-            where_clauses.append("m.project = %s")
-            params.append(project)
+            if source:
+                where_clauses.append("m.source = %s")
+                params.append(source)
 
-        if source:
-            where_clauses.append("m.source = %s")
-            params.append(source)
+            if agent:
+                where_clauses.append("m.agent = %s")
+                params.append(agent)
 
-        if agent:
-            where_clauses.append("m.agent = %s")
-            params.append(agent)
+            where_clause = " AND ".join(where_clauses)
+            params.extend([query, query, limit])
 
-        where_clause = " AND ".join(where_clauses)
-        params.extend([query, query, limit])
+            cursor.execute(f"""
+                SELECT m.*,
+                       ts_rank(m.fts, plainto_tsquery('english', %s)) as score,
+                       EXISTS(SELECT 1 FROM memory_details WHERE user_id = m.user_id AND memory_id = m.memory_id) as has_details
+                FROM memories m
+                WHERE {where_clause}
+                  AND m.fts @@ plainto_tsquery('english', %s)
+                ORDER BY score DESC
+                LIMIT %s
+            """, params)
 
-        cursor.execute(f"""
-            SELECT m.*,
-                   ts_rank(m.fts, plainto_tsquery('english', %s)) as score,
-                   EXISTS(SELECT 1 FROM memory_details WHERE user_id = m.user_id AND memory_id = m.memory_id) as has_details
-            FROM memories m
-            WHERE {where_clause}
-              AND m.fts @@ plainto_tsquery('english', %s)
-            ORDER BY score DESC
-            LIMIT %s
-        """, params)
-
-        return [_normalize_row(row) for row in cursor.fetchall()]
+            results = [_normalize_row(row) for row in cursor.fetchall()]
+            self.conn.commit()
+            return results
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def vector_search(
         self,
@@ -615,36 +652,41 @@ class MemoryDBPostgres:
             return []
 
         cursor = self._safe_cursor(dict_cursor=True)
+        try:
+            where_clauses = ["m.user_id = %s", "m.embedding IS NOT NULL"]
+            params = [self.user_id]
 
-        where_clauses = ["m.user_id = %s", "m.embedding IS NOT NULL"]
-        params = [self.user_id]
+            if project:
+                where_clauses.append("m.project = %s")
+                params.append(project)
 
-        if project:
-            where_clauses.append("m.project = %s")
-            params.append(project)
+            if source:
+                where_clauses.append("m.source = %s")
+                params.append(source)
 
-        if source:
-            where_clauses.append("m.source = %s")
-            params.append(source)
+            if agent:
+                where_clauses.append("m.agent = %s")
+                params.append(agent)
 
-        if agent:
-            where_clauses.append("m.agent = %s")
-            params.append(agent)
+            where_clause = " AND ".join(where_clauses)
+            params.extend([query_embedding, query_embedding, limit])
 
-        where_clause = " AND ".join(where_clauses)
-        params.extend([query_embedding, query_embedding, limit])
+            cursor.execute(f"""
+                SELECT m.*,
+                       1 - (m.embedding <=> %s) as score,
+                       EXISTS(SELECT 1 FROM memory_details WHERE user_id = m.user_id AND memory_id = m.memory_id) as has_details
+                FROM memories m
+                WHERE {where_clause}
+                ORDER BY m.embedding <=> %s
+                LIMIT %s
+            """, params)
 
-        cursor.execute(f"""
-            SELECT m.*,
-                   1 - (m.embedding <=> %s) as score,
-                   EXISTS(SELECT 1 FROM memory_details WHERE user_id = m.user_id AND memory_id = m.memory_id) as has_details
-            FROM memories m
-            WHERE {where_clause}
-            ORDER BY m.embedding <=> %s
-            LIMIT %s
-        """, params)
-
-        return [_normalize_row(row) for row in cursor.fetchall()]
+            results = [_normalize_row(row) for row in cursor.fetchall()]
+            self.conn.commit()
+            return results
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def list_recent(
         self,
@@ -668,35 +710,40 @@ class MemoryDBPostgres:
             return []
 
         cursor = self._safe_cursor(dict_cursor=True)
+        try:
+            where_clauses = ["m.user_id = %s"]
+            params = [self.user_id]
 
-        where_clauses = ["m.user_id = %s"]
-        params = [self.user_id]
+            if project:
+                where_clauses.append("m.project = %s")
+                params.append(project)
 
-        if project:
-            where_clauses.append("m.project = %s")
-            params.append(project)
+            if source:
+                where_clauses.append("m.source = %s")
+                params.append(source)
 
-        if source:
-            where_clauses.append("m.source = %s")
-            params.append(source)
+            if agent:
+                where_clauses.append("m.agent = %s")
+                params.append(agent)
 
-        if agent:
-            where_clauses.append("m.agent = %s")
-            params.append(agent)
+            where_clause = " AND ".join(where_clauses)
+            params.append(limit)
 
-        where_clause = " AND ".join(where_clauses)
-        params.append(limit)
+            cursor.execute(f"""
+                SELECT m.memory_id as id, m.title, m.category, m.tags, m.project, m.source, m.created_at,
+                       EXISTS(SELECT 1 FROM memory_details WHERE user_id = m.user_id AND memory_id = m.memory_id) as has_details
+                FROM memories m
+                WHERE {where_clause}
+                ORDER BY m.created_at DESC
+                LIMIT %s
+            """, params)
 
-        cursor.execute(f"""
-            SELECT m.memory_id as id, m.title, m.category, m.tags, m.project, m.source, m.created_at,
-                   EXISTS(SELECT 1 FROM memory_details WHERE user_id = m.user_id AND memory_id = m.memory_id) as has_details
-            FROM memories m
-            WHERE {where_clause}
-            ORDER BY m.created_at DESC
-            LIMIT %s
-        """, params)
-
-        return [_normalize_row(row) for row in cursor.fetchall()]
+            results = [_normalize_row(row) for row in cursor.fetchall()]
+            self.conn.commit()
+            return results
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def list_all_for_reindex(self) -> list[dict]:
         """List all memories for re-embedding.
@@ -708,13 +755,19 @@ class MemoryDBPostgres:
             return []
 
         cursor = self._safe_cursor(dict_cursor=True)
-        cursor.execute("""
-            SELECT id as rowid, title, what, why, impact, tags
-            FROM memories
-            WHERE user_id = %s
-            ORDER BY id
-        """, (self.user_id,))
-        return [_normalize_row(row) for row in cursor.fetchall()]
+        try:
+            cursor.execute("""
+                SELECT id as rowid, title, what, why, impact, tags
+                FROM memories
+                WHERE user_id = %s
+                ORDER BY id
+            """, (self.user_id,))
+            results = [_normalize_row(row) for row in cursor.fetchall()]
+            self.conn.commit()
+            return results
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def count_memories(
         self,
@@ -736,29 +789,34 @@ class MemoryDBPostgres:
             return 0
 
         cursor = self._safe_cursor()
+        try:
+            where_clauses = ["user_id = %s"]
+            params = [self.user_id]
 
-        where_clauses = ["user_id = %s"]
-        params = [self.user_id]
+            if project:
+                where_clauses.append("project = %s")
+                params.append(project)
 
-        if project:
-            where_clauses.append("project = %s")
-            params.append(project)
+            if source:
+                where_clauses.append("source = %s")
+                params.append(source)
 
-        if source:
-            where_clauses.append("source = %s")
-            params.append(source)
+            if agent:
+                where_clauses.append("agent = %s")
+                params.append(agent)
 
-        if agent:
-            where_clauses.append("agent = %s")
-            params.append(agent)
+            where_clause = " AND ".join(where_clauses)
 
-        where_clause = " AND ".join(where_clauses)
+            cursor.execute(f"""
+                SELECT COUNT(*) FROM memories WHERE {where_clause}
+            """, params)
 
-        cursor.execute(f"""
-            SELECT COUNT(*) FROM memories WHERE {where_clause}
-        """, params)
-
-        return cursor.fetchone()[0]
+            result = cursor.fetchone()[0]
+            self.conn.commit()
+            return result
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def set_meta(self, key: str, value: str) -> None:
         """Set metadata key-value pair.
@@ -771,12 +829,16 @@ class MemoryDBPostgres:
             return
 
         cursor = self._safe_cursor()
-        cursor.execute("""
-            INSERT INTO meta (user_id, key, value)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value
-        """, (self.user_id, key, value))
-        self.conn.commit()
+        try:
+            cursor.execute("""
+                INSERT INTO meta (user_id, key, value)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value
+            """, (self.user_id, key, value))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def get_meta(self, key: str) -> Optional[str]:
         """Get metadata value by key.
@@ -791,15 +853,18 @@ class MemoryDBPostgres:
             return None
 
         cursor = self._safe_cursor()
-        cursor.execute("""
-            SELECT value FROM meta
-            WHERE user_id = %s AND key = %s
-        """, (self.user_id, key))
+        try:
+            cursor.execute("""
+                SELECT value FROM meta
+                WHERE user_id = %s AND key = %s
+            """, (self.user_id, key))
 
-        row = cursor.fetchone()
-        if row:
-            return row[0]
-        return None
+            row = cursor.fetchone()
+            self.conn.commit()
+            return row[0] if row else None
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def close(self) -> None:
         """Close database connection."""
@@ -817,14 +882,18 @@ class MemoryDBPostgres:
             Tuple of (user_id, token)
         """
         cursor = self._safe_cursor()
-        cursor.execute("""
-            INSERT INTO users (name)
-            VALUES (%s)
-            RETURNING id, token
-        """, (name,))
-        row = cursor.fetchone()
-        self.conn.commit()
-        return row[0], row[1]
+        try:
+            cursor.execute("""
+                INSERT INTO users (name)
+                VALUES (%s)
+                RETURNING id, token
+            """, (name,))
+            row = cursor.fetchone()
+            self.conn.commit()
+            return row[0], row[1]
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def list_users(self) -> list[dict]:
         """List all users (admin operation).
@@ -833,12 +902,18 @@ class MemoryDBPostgres:
             List of user dicts
         """
         cursor = self._safe_cursor(dict_cursor=True)
-        cursor.execute("""
-            SELECT id, name, created_at
-            FROM users
-            ORDER BY id
-        """)
-        return [_normalize_row(row) for row in cursor.fetchall()]
+        try:
+            cursor.execute("""
+                SELECT id, name, created_at
+                FROM users
+                ORDER BY id
+            """)
+            results = [_normalize_row(row) for row in cursor.fetchall()]
+            self.conn.commit()
+            return results
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def get_user_by_token(self, token: str) -> Optional[dict]:
         """Get user by token (admin/auth operation).
@@ -850,12 +925,17 @@ class MemoryDBPostgres:
             User dict or None
         """
         cursor = self._safe_cursor(dict_cursor=True)
-        cursor.execute("""
-            SELECT id, name, created_at
-            FROM users
-            WHERE token = %s
-        """, (token,))
-        row = cursor.fetchone()
-        if row:
-            return _normalize_row(row)
-        return None
+        try:
+            cursor.execute("""
+                SELECT id, name, created_at
+                FROM users
+                WHERE token = %s
+            """, (token,))
+            row = cursor.fetchone()
+            self.conn.commit()
+            if row:
+                return _normalize_row(row)
+            return None
+        except Exception:
+            self.conn.rollback()
+            raise
