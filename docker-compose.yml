@@ -44,16 +44,16 @@ services:
 
       # Server config
       MEMORY_HOME: /app/.memory
-      MCP_TRANSPORT: sse
+      MCP_TRANSPORT: http
       MCP_PORT: 8420
       MCP_HOST: 0.0.0.0
     ports:
-      - "8420:8420"  # SSE transport
+      - "8420:8420"  # Streamable HTTP transport
     volumes:
       - memory-data:/app/.memory
     networks:
       - memory-network
-    command: memory mcp --transport sse --port 8420 --host 0.0.0.0
+    command: memory mcp --transport http --port 8420 --host 0.0.0.0
 
   # (Optional) pgAdmin — для управления PostgreSQL через Web UI
   pgadmin:
