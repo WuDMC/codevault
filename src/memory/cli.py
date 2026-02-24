@@ -645,7 +645,7 @@ def mcp(transport, port, host):
         from memory.mcp_server import run_server
         asyncio.run(run_server())
     elif transport == "http":
-        # Streamable HTTP transport (MCP 2025-03-26 spec) — stateless, no stale sessions
+        # Streamable HTTP transport (MCP 2025-03-26 spec) — stateful sessions
         from memory.mcp_server_sse import create_server, resolve_user_id_from_token
         from memory.config import get_memory_home, load_config
         from mcp.server.streamable_http import StreamableHTTPServerTransport
@@ -654,8 +654,12 @@ def mcp(transport, port, host):
         from starlette.requests import Request
         from starlette.responses import JSONResponse
         from starlette.routing import Route
+        from starlette.middleware import Middleware
+        from starlette.middleware.cors import CORSMiddleware
+        import contextlib
         import anyio
         import uvicorn
+        import uuid
 
         home = get_memory_home()
         config = load_config(os.path.join(home, "config.yaml"))
@@ -663,48 +667,117 @@ def mcp(transport, port, host):
         # Disable DNS rebinding protection — we serve behind nginx/IP
         security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
-        async def handle_mcp(request: Request):
-            # Token-based auth for multi-user mode
-            auth_header = request.headers.get("Authorization", "")
-            token = None
-            if auth_header.startswith("Bearer "):
-                token = auth_header[7:]
+        # Stateful session store: session_id -> {transport, server, service}
+        sessions: dict[str, dict] = {}
+        # App-level task group — set in lifespan, used to spawn session tasks
+        app_task_group: anyio.abc.TaskGroup | None = None
 
-            user_id = None
-            if token and config.storage.backend == "postgresql":
+        def _auth_user(request: Request) -> tuple[int | None, str | None]:
+            """Extract and validate Bearer token, return (user_id, error_msg)."""
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header[7:] if auth_header.startswith("Bearer ") else None
+            if not token:
+                click.echo(f"[AUTH] No token from {request.client.host}")
+                return None, None
+            if config.storage.backend == "postgresql":
                 user_id = resolve_user_id_from_token(token)
                 if not user_id:
                     click.echo(f"[AUTH] Invalid token from {request.client.host}")
-                    return JSONResponse({"error": "Invalid token"}, status_code=401)
+                    return None, "Invalid token"
                 click.echo(f"[AUTH] User {user_id} from {request.client.host}")
-            elif not token:
-                click.echo(f"[AUTH] No token from {request.client.host}")
+                return user_id, None
+            return None, None
 
+        async def handle_mcp(request: Request):
+            nonlocal app_task_group
+            session_id = request.headers.get("mcp-session-id")
+
+            # Case 1: Existing session — route to its transport
+            if session_id and session_id in sessions:
+                session = sessions[session_id]
+                try:
+                    await session["transport"].handle_request(
+                        request.scope, request.receive, request._send,
+                    )
+                except Exception as e:
+                    click.echo(f"[ERROR] Session {session_id}: {e}")
+                    sessions.pop(session_id, None)
+                    session["service"].close()
+                return
+
+            # Case 2: Unknown session ID — 404
+            if session_id and session_id not in sessions:
+                return JSONResponse(
+                    {"error": "Session not found"}, status_code=404,
+                )
+
+            # Case 3: No session header — new session (initialize)
+            user_id, error = _auth_user(request)
+            if error:
+                return JSONResponse({"error": error}, status_code=401)
+
+            new_session_id = uuid.uuid4().hex
             server, service = create_server(user_id=user_id)
             http_transport = StreamableHTTPServerTransport(
-                mcp_session_id=None,
+                mcp_session_id=new_session_id,
                 security_settings=security,
             )
-            try:
-                async with http_transport.connect() as (read_stream, write_stream):
-                    async with anyio.create_task_group() as tg:
-                        tg.start_soon(
-                            server.run,
+
+            async def run_session(*, task_status=anyio.TASK_STATUS_IGNORED):
+                try:
+                    async with http_transport.connect() as (read_stream, write_stream):
+                        sessions[new_session_id] = {
+                            "transport": http_transport,
+                            "server": server,
+                            "service": service,
+                        }
+                        click.echo(f"[SESSION] Started {new_session_id}")
+                        task_status.started()
+                        await server.run(
                             read_stream, write_stream,
                             server.create_initialization_options(),
                         )
-                        await http_transport.handle_request(
-                            request.scope, request.receive, request._send,
-                        )
-            except Exception as e:
-                click.echo(f"[ERROR] {e}")
-            finally:
-                service.close()
+                except Exception as e:
+                    click.echo(f"[ERROR] Session {new_session_id}: {e}")
+                finally:
+                    sessions.pop(new_session_id, None)
+                    service.close()
+                    click.echo(f"[SESSION] Closed {new_session_id}")
 
-        app = Starlette(routes=[
-            Route("/mcp", endpoint=handle_mcp, methods=["GET", "POST", "DELETE"]),
-        ])
-        click.echo(f"Starting MCP server on {host}:{port} (Streamable HTTP transport)")
+            # Start server.run() in background, wait until transport is ready
+            await app_task_group.start(run_session)
+            # Now handle the initialize request
+            await http_transport.handle_request(
+                request.scope, request.receive, request._send,
+            )
+
+        @contextlib.asynccontextmanager
+        async def lifespan(app):
+            nonlocal app_task_group
+            async with anyio.create_task_group() as tg:
+                app_task_group = tg
+                click.echo(f"Starting MCP server on {host}:{port} (Streamable HTTP)")
+                yield
+                # On shutdown: cancel all session tasks
+                tg.cancel_scope.cancel()
+                for sid, session in sessions.items():
+                    session["service"].close()
+                sessions.clear()
+
+        app = Starlette(
+            routes=[
+                Route("/mcp", endpoint=handle_mcp, methods=["GET", "POST", "DELETE"]),
+            ],
+            lifespan=lifespan,
+            middleware=[
+                Middleware(
+                    CORSMiddleware,
+                    allow_origins=["*"],
+                    allow_methods=["GET", "POST", "DELETE"],
+                    expose_headers=["Mcp-Session-Id"],
+                ),
+            ],
+        )
         uvicorn.run(app, host=host, port=port)
     else:
         # SSE transport (deprecated — use --transport http instead)
