@@ -19,8 +19,8 @@ RUN pip install --no-cache-dir -e .
 # Create memory home directory
 RUN mkdir -p /app/.memory
 
-# Expose SSE port
+# Expose MCP port
 EXPOSE 8420
 
-# Default command (can be overridden in docker-compose.yml)
-CMD ["memory", "mcp", "--transport", "sse", "--port", "8420", "--host", "0.0.0.0"]
+# Default command — Streamable HTTP transport (stateless, resilient to disconnects)
+CMD ["memory", "mcp", "--transport", "http", "--port", "8420", "--host", "0.0.0.0"]

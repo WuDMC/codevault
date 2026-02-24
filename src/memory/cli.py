@@ -634,9 +634,9 @@ def user_list():
 
 
 @main.command()
-@click.option("--transport", type=click.Choice(["stdio", "sse"]), default="stdio", help="Transport type")
-@click.option("--port", type=int, default=8420, help="Port for SSE transport")
-@click.option("--host", default="127.0.0.1", help="Host for SSE transport")
+@click.option("--transport", type=click.Choice(["stdio", "sse", "http"]), default="stdio", help="Transport type")
+@click.option("--port", type=int, default=8420, help="Port for SSE/HTTP transport")
+@click.option("--host", default="127.0.0.1", help="Host for SSE/HTTP transport")
 def mcp(transport, port, host):
     """Start the EchoVault MCP server."""
     import asyncio
@@ -644,8 +644,70 @@ def mcp(transport, port, host):
     if transport == "stdio":
         from memory.mcp_server import run_server
         asyncio.run(run_server())
+    elif transport == "http":
+        # Streamable HTTP transport (MCP 2025-03-26 spec) — stateless, no stale sessions
+        from memory.mcp_server_sse import create_server, resolve_user_id_from_token
+        from memory.config import get_memory_home, load_config
+        from mcp.server.streamable_http import StreamableHTTPServerTransport
+        from mcp.server.transport_security import TransportSecuritySettings
+        from starlette.applications import Starlette
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse
+        from starlette.routing import Route
+        import anyio
+        import uvicorn
+
+        home = get_memory_home()
+        config = load_config(os.path.join(home, "config.yaml"))
+
+        # Disable DNS rebinding protection — we serve behind nginx/IP
+        security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+
+        async def handle_mcp(request: Request):
+            # Token-based auth for multi-user mode
+            auth_header = request.headers.get("Authorization", "")
+            token = None
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+
+            user_id = None
+            if token and config.storage.backend == "postgresql":
+                user_id = resolve_user_id_from_token(token)
+                if not user_id:
+                    click.echo(f"[AUTH] Invalid token from {request.client.host}")
+                    return JSONResponse({"error": "Invalid token"}, status_code=401)
+                click.echo(f"[AUTH] User {user_id} from {request.client.host}")
+            elif not token:
+                click.echo(f"[AUTH] No token from {request.client.host}")
+
+            server, service = create_server(user_id=user_id)
+            http_transport = StreamableHTTPServerTransport(
+                mcp_session_id=None,
+                security_settings=security,
+            )
+            try:
+                async with http_transport.connect() as (read_stream, write_stream):
+                    async with anyio.create_task_group() as tg:
+                        tg.start_soon(
+                            server.run,
+                            read_stream, write_stream,
+                            server.create_initialization_options(),
+                        )
+                        await http_transport.handle_request(
+                            request.scope, request.receive, request._send,
+                        )
+            except Exception as e:
+                click.echo(f"[ERROR] {e}")
+            finally:
+                service.close()
+
+        app = Starlette(routes=[
+            Route("/mcp", endpoint=handle_mcp, methods=["GET", "POST", "DELETE"]),
+        ])
+        click.echo(f"Starting MCP server on {host}:{port} (Streamable HTTP transport)")
+        uvicorn.run(app, host=host, port=port)
     else:
-        # SSE transport with auth
+        # SSE transport (deprecated — use --transport http instead)
         from memory.mcp_server_sse import create_server, resolve_user_id_from_token
         from memory.config import get_memory_home, load_config
         from mcp.server.sse import SseServerTransport
@@ -697,7 +759,7 @@ def mcp(transport, port, host):
             Route("/sse", endpoint=handle_sse),
             Mount("/messages/", app=sse_transport.handle_post_message),
         ])
-        click.echo(f"Starting MCP server on {host}:{port} (SSE transport)")
+        click.echo(f"Starting MCP server on {host}:{port} (SSE transport, deprecated)")
         uvicorn.run(app, host=host, port=port)
 
 
