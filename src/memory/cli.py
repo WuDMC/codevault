@@ -653,7 +653,7 @@ def mcp(transport, port, host):
         from starlette.applications import Starlette
         from starlette.requests import Request
         from starlette.responses import JSONResponse
-        from starlette.routing import Route
+        from starlette.routing import Mount, Route
         from starlette.middleware import Middleware
         from starlette.middleware.cors import CORSMiddleware
         import contextlib
@@ -688,17 +688,17 @@ def mcp(transport, port, host):
                 return user_id, None
             return None, None
 
-        async def handle_mcp(request: Request):
+        async def handle_mcp(scope, receive, send):
+            """Raw ASGI handler — transport.handle_request writes directly to send."""
             nonlocal app_task_group
+            request = Request(scope, receive, send)
             session_id = request.headers.get("mcp-session-id")
 
             # Case 1: Existing session — route to its transport
             if session_id and session_id in sessions:
                 session = sessions[session_id]
                 try:
-                    await session["transport"].handle_request(
-                        request.scope, request.receive, request._send,
-                    )
+                    await session["transport"].handle_request(scope, receive, send)
                 except Exception as e:
                     click.echo(f"[ERROR] Session {session_id}: {e}")
                     sessions.pop(session_id, None)
@@ -707,14 +707,18 @@ def mcp(transport, port, host):
 
             # Case 2: Unknown session ID — 404
             if session_id and session_id not in sessions:
-                return JSONResponse(
+                response = JSONResponse(
                     {"error": "Session not found"}, status_code=404,
                 )
+                await response(scope, receive, send)
+                return
 
             # Case 3: No session header — new session (initialize)
             user_id, error = _auth_user(request)
             if error:
-                return JSONResponse({"error": error}, status_code=401)
+                response = JSONResponse({"error": error}, status_code=401)
+                await response(scope, receive, send)
+                return
 
             new_session_id = uuid.uuid4().hex
             server, service = create_server(user_id=user_id)
@@ -747,9 +751,7 @@ def mcp(transport, port, host):
             # Start server.run() in background, wait until transport is ready
             await app_task_group.start(run_session)
             # Now handle the initialize request
-            await http_transport.handle_request(
-                request.scope, request.receive, request._send,
-            )
+            await http_transport.handle_request(scope, receive, send)
 
         @contextlib.asynccontextmanager
         async def lifespan(app):
@@ -766,7 +768,7 @@ def mcp(transport, port, host):
 
         app = Starlette(
             routes=[
-                Route("/mcp", endpoint=handle_mcp, methods=["GET", "POST", "DELETE"]),
+                Mount("/mcp", app=handle_mcp),
             ],
             lifespan=lifespan,
             middleware=[
