@@ -678,6 +678,8 @@ def mcp(transport, port, host):
             token = auth_header[7:] if auth_header.startswith("Bearer ") else None
             if not token:
                 click.echo(f"[AUTH] No token from {request.client.host}")
+                if config.storage.backend == "postgresql":
+                    return None, "Token required"
                 return None, None
             if config.storage.backend == "postgresql":
                 user_id = resolve_user_id_from_token(token)
