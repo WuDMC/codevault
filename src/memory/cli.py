@@ -707,15 +707,9 @@ def mcp(transport, port, host):
                     session["service"].close()
                 return
 
-            # Case 2: Unknown session ID — 404
+            # Case 2: No session or unknown session ID — create new session
             if session_id and session_id not in sessions:
-                response = JSONResponse(
-                    {"error": "Session not found"}, status_code=404,
-                )
-                await response(scope, receive, send)
-                return
-
-            # Case 3: No session header — new session (initialize)
+                click.echo(f"[SESSION] Unknown {session_id}, creating new")
             user_id, error = _auth_user(request)
             if error:
                 response = JSONResponse({"error": error}, status_code=401)
