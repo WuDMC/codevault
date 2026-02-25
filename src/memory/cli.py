@@ -768,7 +768,7 @@ def mcp(transport, port, host):
 
         app = Starlette(
             routes=[
-                Mount("/mcp", app=handle_mcp),
+                Mount("", app=handle_mcp),
             ],
             lifespan=lifespan,
             middleware=[
