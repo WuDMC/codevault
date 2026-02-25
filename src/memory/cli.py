@@ -708,8 +708,9 @@ def mcp(transport, port, host):
                 return
 
             # Case 2: No session or unknown session ID — create new session
-            if session_id and session_id not in sessions:
-                click.echo(f"[SESSION] Unknown {session_id}, creating new")
+            is_reconnect = bool(session_id and session_id not in sessions)
+            if is_reconnect:
+                click.echo(f"[SESSION] Reconnect {session_id}")
             user_id, error = _auth_user(request)
             if error:
                 response = JSONResponse({"error": error}, status_code=401)
@@ -737,6 +738,8 @@ def mcp(transport, port, host):
                         await server.run(
                             read_stream, write_stream,
                             server.create_initialization_options(),
+                            # Skip init requirement for reconnect (client won't re-send initialize)
+                            stateless=is_reconnect,
                         )
                 except Exception as e:
                     click.echo(f"[ERROR] Session {new_session_id}: {e}")
