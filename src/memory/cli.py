@@ -716,7 +716,8 @@ def mcp(transport, port, host):
                 await response(scope, receive, send)
                 return
 
-            new_session_id = uuid.uuid4().hex
+            # Reuse client's session ID if provided (reconnect after server restart)
+            new_session_id = session_id if session_id else uuid.uuid4().hex
             server, service = create_server(user_id=user_id)
             http_transport = StreamableHTTPServerTransport(
                 mcp_session_id=new_session_id,
