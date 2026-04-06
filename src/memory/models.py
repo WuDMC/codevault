@@ -86,6 +86,31 @@ class MemoryDetail:
 
 
 @dataclass
+class Project:
+    """A registered project."""
+
+    name: str
+    display_name: Optional[str]
+    description: Optional[str]
+    created_at: str
+
+
+@dataclass
+class TodoItem:
+    """A persistent TODO item scoped to a project."""
+
+    id: int
+    project: str
+    title: str
+    description: Optional[str]
+    status: str  # pending, in_progress, done, cancelled
+    priority: int  # 0=normal, 1=high, 2=critical
+    source_memory_id: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+@dataclass
 class SearchResult:
     """Search result with score and metadata."""
 

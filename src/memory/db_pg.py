@@ -228,6 +228,40 @@ class MemoryDBPostgres:
             END $$;
         """)
 
+        # Projects table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS projects (
+                id          BIGSERIAL PRIMARY KEY,
+                user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name        VARCHAR(255) NOT NULL,
+                display_name VARCHAR(255),
+                description TEXT,
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(user_id, name)
+            )
+        """)
+
+        # TODOs table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS todos (
+                id              BIGSERIAL PRIMARY KEY,
+                user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                project         VARCHAR(255) NOT NULL,
+                title           TEXT NOT NULL,
+                description     TEXT,
+                status          VARCHAR(20) DEFAULT 'pending',
+                priority        INTEGER DEFAULT 0,
+                source_memory_id VARCHAR(36),
+                created_at      TIMESTAMPTZ DEFAULT NOW(),
+                updated_at      TIMESTAMPTZ DEFAULT NOW(),
+                completed_at    TIMESTAMPTZ
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_todos_user_project
+            ON todos (user_id, project, status)
+        """)
+
         self.conn.commit()
 
     def has_vec_table(self) -> bool:
@@ -873,6 +907,230 @@ class MemoryDBPostgres:
             row = cursor.fetchone()
             self.conn.commit()
             return row[0] if row else None
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    # ── Project methods ──
+
+    def project_exists(self, name: str) -> bool:
+        """Check if a project is registered for the current user."""
+        if not self.user_id:
+            return False
+        cursor = self._safe_cursor()
+        try:
+            cursor.execute(
+                "SELECT 1 FROM projects WHERE user_id = %s AND name = %s",
+                (self.user_id, name),
+            )
+            result = cursor.fetchone() is not None
+            self.conn.commit()
+            return result
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def register_project(
+        self,
+        name: str,
+        display_name: str | None = None,
+        description: str | None = None,
+    ) -> dict:
+        """Register a project. Returns existing if already registered."""
+        if not self.user_id:
+            raise ValueError("user_id required for register_project")
+        cursor = self._safe_cursor(dict_cursor=True)
+        try:
+            cursor.execute(
+                """
+                INSERT INTO projects (user_id, name, display_name, description)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (user_id, name) DO NOTHING
+                RETURNING id, name, display_name, description, created_at
+                """,
+                (self.user_id, name, display_name, description),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                # Already existed
+                cursor.execute(
+                    "SELECT id, name, display_name, description, created_at FROM projects WHERE user_id = %s AND name = %s",
+                    (self.user_id, name),
+                )
+                row = cursor.fetchone()
+            self.conn.commit()
+            return _normalize_row(row)
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def list_projects(self) -> list[dict]:
+        """List all registered projects for the current user."""
+        if not self.user_id:
+            return []
+        cursor = self._safe_cursor(dict_cursor=True)
+        try:
+            cursor.execute(
+                "SELECT id, name, display_name, description, created_at FROM projects WHERE user_id = %s ORDER BY name",
+                (self.user_id,),
+            )
+            results = [_normalize_row(row) for row in cursor.fetchall()]
+            self.conn.commit()
+            return results
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def auto_register_projects(self) -> int:
+        """Register all distinct project names from existing memories."""
+        if not self.user_id:
+            return 0
+        cursor = self._safe_cursor()
+        try:
+            cursor.execute(
+                """
+                INSERT INTO projects (user_id, name)
+                SELECT DISTINCT %s, project FROM memories
+                WHERE user_id = %s AND project IS NOT NULL
+                ON CONFLICT (user_id, name) DO NOTHING
+                """,
+                (self.user_id, self.user_id),
+            )
+            count = cursor.rowcount
+            self.conn.commit()
+            return count
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    # ── TODO methods ──
+
+    def add_todo(
+        self,
+        project: str,
+        title: str,
+        description: str | None = None,
+        priority: int = 0,
+        source_memory_id: str | None = None,
+    ) -> dict:
+        """Add a TODO item."""
+        if not self.user_id:
+            raise ValueError("user_id required for add_todo")
+        cursor = self._safe_cursor(dict_cursor=True)
+        try:
+            cursor.execute(
+                """
+                INSERT INTO todos (user_id, project, title, description, priority, source_memory_id)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, project, title, description, status, priority, source_memory_id, created_at, updated_at
+                """,
+                (self.user_id, project, title, description, priority, source_memory_id),
+            )
+            row = cursor.fetchone()
+            self.conn.commit()
+            return _normalize_row(row)
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def update_todo(
+        self,
+        todo_id: int,
+        status: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        priority: int | None = None,
+    ) -> dict | None:
+        """Update a TODO item. Returns updated row or None if not found."""
+        if not self.user_id:
+            return None
+        cursor = self._safe_cursor(dict_cursor=True)
+        try:
+            from datetime import datetime, timezone
+
+            sets = ["updated_at = %s"]
+            params: list = [datetime.now(timezone.utc).isoformat()]
+
+            if status is not None:
+                sets.append("status = %s")
+                params.append(status)
+                if status == "done":
+                    sets.append("completed_at = %s")
+                    params.append(datetime.now(timezone.utc).isoformat())
+            if title is not None:
+                sets.append("title = %s")
+                params.append(title)
+            if description is not None:
+                sets.append("description = %s")
+                params.append(description)
+            if priority is not None:
+                sets.append("priority = %s")
+                params.append(priority)
+
+            params.extend([self.user_id, todo_id])
+            cursor.execute(
+                f"UPDATE todos SET {', '.join(sets)} WHERE user_id = %s AND id = %s "
+                "RETURNING id, project, title, description, status, priority, source_memory_id, created_at, updated_at, completed_at",
+                params,
+            )
+            row = cursor.fetchone()
+            self.conn.commit()
+            if row:
+                return _normalize_row(row)
+            return None
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def list_todos(
+        self,
+        project: str,
+        statuses: list[str] | None = None,
+    ) -> list[dict]:
+        """List TODOs for a project filtered by status."""
+        if not self.user_id:
+            return []
+        if statuses is None:
+            statuses = ["pending", "in_progress"]
+        cursor = self._safe_cursor(dict_cursor=True)
+        try:
+            cursor.execute(
+                """
+                SELECT id, project, title, description, status, priority,
+                       source_memory_id, created_at, updated_at, completed_at
+                FROM todos
+                WHERE user_id = %s AND project = %s AND status = ANY(%s)
+                ORDER BY priority DESC, created_at ASC
+                """,
+                (self.user_id, project, statuses),
+            )
+            results = [_normalize_row(row) for row in cursor.fetchall()]
+            self.conn.commit()
+            return results
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def get_todo(self, todo_id: int) -> dict | None:
+        """Get a single TODO by ID."""
+        if not self.user_id:
+            return None
+        cursor = self._safe_cursor(dict_cursor=True)
+        try:
+            cursor.execute(
+                """
+                SELECT id, project, title, description, status, priority,
+                       source_memory_id, created_at, updated_at, completed_at
+                FROM todos
+                WHERE user_id = %s AND id = %s
+                """,
+                (self.user_id, todo_id),
+            )
+            row = cursor.fetchone()
+            self.conn.commit()
+            if row:
+                return _normalize_row(row)
+            return None
         except Exception:
             self.conn.rollback()
             raise

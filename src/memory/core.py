@@ -562,6 +562,131 @@ class MemoryService:
             "model": self.config.embedding.model,
         }
 
+    # ── Project methods ──
+
+    def project_exists(self, name: str) -> bool:
+        """Check if a project is registered."""
+        if not hasattr(self.db, "project_exists"):
+            return True  # SQLite fallback: no registration required
+        return self.db.project_exists(name)
+
+    def register_project(
+        self,
+        name: str,
+        display_name: str | None = None,
+        description: str | None = None,
+    ) -> dict:
+        """Register a new project."""
+        if not hasattr(self.db, "register_project"):
+            raise NotImplementedError("Project registration requires PostgreSQL backend")
+        return self.db.register_project(name, display_name, description)
+
+    def list_projects(self) -> list[dict]:
+        """List all registered projects."""
+        if not hasattr(self.db, "list_projects"):
+            return []
+        return self.db.list_projects()
+
+    def auto_register_projects(self) -> int:
+        """Bulk-register projects from existing memories."""
+        if not hasattr(self.db, "auto_register_projects"):
+            raise NotImplementedError("Project registration requires PostgreSQL backend")
+        return self.db.auto_register_projects()
+
+    # ── TODO methods ──
+
+    def add_todo(
+        self,
+        project: str,
+        title: str,
+        description: str | None = None,
+        priority: int = 0,
+        source_memory_id: str | None = None,
+    ) -> dict:
+        """Add a TODO item to a project."""
+        if not hasattr(self.db, "add_todo"):
+            raise NotImplementedError("TODOs require PostgreSQL backend")
+        return self.db.add_todo(project, title, description, priority, source_memory_id)
+
+    def update_todo(
+        self,
+        todo_id: int,
+        status: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        priority: int | None = None,
+    ) -> dict | None:
+        """Update a TODO item."""
+        if not hasattr(self.db, "update_todo"):
+            raise NotImplementedError("TODOs require PostgreSQL backend")
+        return self.db.update_todo(todo_id, status, title, description, priority)
+
+    def list_todos(
+        self,
+        project: str,
+        statuses: list[str] | None = None,
+    ) -> list[dict]:
+        """List TODOs for a project."""
+        if not hasattr(self.db, "list_todos"):
+            return []
+        return self.db.list_todos(project, statuses)
+
+    def generate_todo_suggestions(
+        self,
+        raw: RawMemoryInput,
+        project: str,
+    ) -> dict:
+        """Generate TODO suggestions based on saved memory content.
+
+        Heuristic v1: scan details for follow-up keywords, match bugs to existing TODOs.
+        """
+        import re
+
+        suggestions: dict = {"add": [], "mark_done": []}
+
+        details = (raw.details or "").strip()
+        what = raw.what or ""
+        title = raw.title or ""
+
+        # Scan for follow-up / TODO keywords in details
+        if details:
+            follow_up_patterns = [
+                r"(?i)follow[- ]?up[:\s]*(.*?)(?:\n|$)",
+                r"(?i)TODO[:\s]*(.*?)(?:\n|$)",
+                r"(?i)next\s+step[s]?[:\s]*(.*?)(?:\n|$)",
+            ]
+            for pattern in follow_up_patterns:
+                for match in re.finditer(pattern, details):
+                    text = match.group(1).strip()
+                    if text and len(text) > 5:
+                        suggestions["add"].append({
+                            "title": text[:120],
+                            "reason": f"Found in details of '{title}'",
+                        })
+
+        # For bug fixes, check if any existing TODOs match
+        if raw.category == "bug" and hasattr(self.db, "list_todos"):
+            try:
+                existing_todos = self.db.list_todos(project, statuses=["pending", "in_progress"])
+                title_lower = title.lower()
+                what_lower = what.lower()
+                for todo in existing_todos:
+                    todo_title_lower = todo["title"].lower()
+                    # Simple word overlap check
+                    todo_words = set(todo_title_lower.split())
+                    memory_words = set(title_lower.split()) | set(what_lower.split())
+                    overlap = todo_words & memory_words - {"the", "a", "an", "is", "in", "to", "for", "of"}
+                    if len(overlap) >= 2:
+                        suggestions["mark_done"].append({
+                            "todo_id": todo["id"],
+                            "title": todo["title"],
+                            "reason": f"Bug fix '{title}' may resolve this TODO",
+                        })
+            except Exception:
+                pass
+
+        return suggestions
+
     def close(self) -> None:
         """Close database connection and clean up resources."""
         self.db.close()

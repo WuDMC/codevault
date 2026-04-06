@@ -633,6 +633,167 @@ def user_list():
         db.close()
 
 
+@main.group()
+def project():
+    """Manage projects (PostgreSQL backend only)."""
+    pass
+
+
+@project.command("register")
+@click.argument("name")
+@click.option("--display-name", default=None, help="Human-readable project name")
+@click.option("--description", default=None, help="Project description")
+def project_register(name, display_name, description):
+    """Register a new project."""
+    svc = MemoryService()
+    try:
+        result = svc.register_project(name, display_name, description)
+        click.echo(f"Project registered: {result['name']}")
+        if result.get("display_name"):
+            click.echo(f"Display name: {result['display_name']}")
+    except NotImplementedError:
+        click.echo("Error: project registration requires PostgreSQL backend", err=True)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+    finally:
+        svc.close()
+
+
+@project.command("list")
+def project_list():
+    """List all registered projects."""
+    svc = MemoryService()
+    try:
+        projects = svc.list_projects()
+        if not projects:
+            click.echo("No projects registered.")
+        else:
+            click.echo(f"Registered projects ({len(projects)}):")
+            for p in projects:
+                display = f" ({p['display_name']})" if p.get("display_name") else ""
+                created = str(p.get("created_at", ""))[:10]
+                click.echo(f"  {p['name']}{display}  (created: {created})")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+    finally:
+        svc.close()
+
+
+@project.command("auto-register")
+def project_auto_register():
+    """Bulk-register all project names from existing memories."""
+    svc = MemoryService()
+    try:
+        count = svc.auto_register_projects()
+        click.echo(f"Auto-registered {count} project(s).")
+    except NotImplementedError:
+        click.echo("Error: project registration requires PostgreSQL backend", err=True)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+    finally:
+        svc.close()
+
+
+@main.group()
+def todo():
+    """Manage TODO items (PostgreSQL backend only)."""
+    pass
+
+
+@todo.command("add")
+@click.argument("title")
+@click.option("--description", default=None, help="Detailed description")
+@click.option("--project", default=None, help="Project name (default: current directory)")
+@click.option("--priority", type=click.Choice(["0", "1", "2"]), default="0", help="0=normal, 1=high, 2=critical")
+def todo_add(title, description, project, priority):
+    """Add a TODO item to a project."""
+    project = project or os.path.basename(os.getcwd())
+    svc = MemoryService()
+    try:
+        result = svc.add_todo(project, title, description, int(priority))
+        click.echo(f"TODO added: #{result['id']} {result['title']}")
+    except NotImplementedError:
+        click.echo("Error: TODOs require PostgreSQL backend", err=True)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+    finally:
+        svc.close()
+
+
+@todo.command("list")
+@click.option("--project", default=None, help="Project name (default: current directory)")
+@click.option("--all", "include_done", is_flag=True, default=False, help="Include done/cancelled items")
+def todo_list_cmd(project, include_done):
+    """List TODO items for a project."""
+    project = project or os.path.basename(os.getcwd())
+    svc = MemoryService()
+    try:
+        statuses = ["pending", "in_progress", "done", "cancelled"] if include_done else None
+        todos = svc.list_todos(project, statuses)
+        if not todos:
+            click.echo(f"No TODOs for project '{project}'.")
+        else:
+            click.echo(f"TODOs for '{project}' ({len(todos)}):")
+            for t in todos:
+                status_icon = {"pending": " ", "in_progress": ">", "done": "x", "cancelled": "-"}.get(t["status"], "?")
+                priority_str = {1: " [HIGH]", 2: " [CRITICAL]"}.get(t.get("priority", 0), "")
+                click.echo(f"  [{status_icon}] #{t['id']} {t['title']}{priority_str}")
+                if t.get("description"):
+                    click.echo(f"      {t['description'][:80]}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+    finally:
+        svc.close()
+
+
+@todo.command("update")
+@click.argument("todo_id", type=int)
+@click.option("--status", type=click.Choice(["pending", "in_progress", "done", "cancelled"]), default=None)
+@click.option("--title", default=None)
+@click.option("--description", default=None)
+@click.option("--priority", type=click.Choice(["0", "1", "2"]), default=None)
+def todo_update(todo_id, status, title, description, priority):
+    """Update a TODO item."""
+    svc = MemoryService()
+    try:
+        result = svc.update_todo(
+            todo_id,
+            status=status,
+            title=title,
+            description=description,
+            priority=int(priority) if priority else None,
+        )
+        if result:
+            click.echo(f"TODO #{todo_id} updated: {result['status']}")
+        else:
+            click.echo(f"TODO #{todo_id} not found.", err=True)
+    except NotImplementedError:
+        click.echo("Error: TODOs require PostgreSQL backend", err=True)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+    finally:
+        svc.close()
+
+
+@todo.command("done")
+@click.argument("todo_id", type=int)
+def todo_done(todo_id):
+    """Mark a TODO as done."""
+    svc = MemoryService()
+    try:
+        result = svc.update_todo(todo_id, status="done")
+        if result:
+            click.echo(f"TODO #{todo_id} marked as done.")
+        else:
+            click.echo(f"TODO #{todo_id} not found.", err=True)
+    except NotImplementedError:
+        click.echo("Error: TODOs require PostgreSQL backend", err=True)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+    finally:
+        svc.close()
+
+
 @main.command()
 @click.option("--transport", type=click.Choice(["stdio", "sse", "http"]), default="stdio", help="Transport type")
 @click.option("--port", type=int, default=8420, help="Port for SSE/HTTP transport")
