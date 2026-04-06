@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "codevault": {
-      "command": "memory",
-      "args": ["mcp"],
-      "type": "stdio"
-    }
-  }
-}
