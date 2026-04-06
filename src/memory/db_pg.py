@@ -68,22 +68,8 @@ class MemoryDBPostgres:
         return self.conn.cursor()
 
     def _ensure_schema(self) -> None:
-        """Create schema only if tables don't exist yet."""
-        cursor = self._safe_cursor()
-        try:
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT 1 FROM information_schema.tables
-                    WHERE table_name = 'memories'
-                )
-            """)
-            exists = cursor.fetchone()[0]
-            self.conn.commit()
-            if not exists:
-                self._create_schema()
-        except Exception:
-            self.conn.rollback()
-            raise
+        """Create or migrate schema. Safe to run repeatedly (all DDL uses IF NOT EXISTS)."""
+        self._create_schema()
 
     def _create_schema(self) -> None:
         """Create database tables and indexes if they don't exist."""
