@@ -165,22 +165,22 @@ deploy-vm:
 	@echo "    cd /opt/memory-server"
 	@echo "    sudo nano .env"
 	@echo ""
-	@echo "Step 3: Starting services..."
+	@echo "Step 3: Rebuilding and starting services..."
 	gcloud compute ssh instance-wu-2 --zone europe-west1-b --project geo-roulette --command "\
 		cd /opt/memory-server && \
-		sudo docker-compose up -d && \
-		sleep 10 && \
-		sudo docker-compose ps"
+		sudo docker compose up -d --build && \
+		sleep 5 && \
+		sudo docker compose ps"
 	@echo ""
 	@echo "✅ Deployment complete! Check logs with: make vm-logs"
 
 vm-logs:
 	gcloud compute ssh instance-wu-2 --zone europe-west1-b --project geo-roulette --command "\
-		cd /opt/memory-server && sudo docker-compose logs -f"
+		cd /opt/memory-server && sudo docker compose logs -f"
 
 vm-status:
 	gcloud compute ssh instance-wu-2 --zone europe-west1-b --project geo-roulette --command "\
-		cd /opt/memory-server && sudo docker-compose ps"
+		cd /opt/memory-server && sudo docker compose ps"
 
 # Git shortcuts
 git-status:

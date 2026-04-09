@@ -1,5 +1,7 @@
 # Memory Agent Starter Kit
 
+> **Note:** This starter kit is superseded by `memory install claude-code`, which fetches the canonical skill bundle from the MCP server and installs everything automatically. Use `memory install claude-code --url URL --token TOKEN` instead of manual copying. See the [README](../README.md) for details.
+
 Universal hooks, skills, and settings for integrating CodeVault Memory MCP into any Claude Code project.
 
 ## What's Included

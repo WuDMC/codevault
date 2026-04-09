@@ -37,6 +37,16 @@ This fork adapts [mraza007/codevault](https://github.com/mraza007/codevault) fro
 - Factory pattern: `if backend == "postgresql": use db_pg.py, else: use db.py`
 - Fully backward compatible with original SQLite mode
 
+#### 6. **Skill Bundle Distribution** (`src/memory/bundles.py`, `src/memory/installer.py`)
+- Standardized skill bundles served from MCP server via REST endpoints
+- One command installs everything: `memory install claude-code --url URL --token TOKEN`
+- Installs canonical SKILL.md, 6 session lifecycle hooks, settings config, and MCP connection
+- Version tracking via `.codevault-manifest.json` — `memory status` shows drift
+- `memory update` re-fetches latest bundle from server with conflict detection
+- Smart settings merge: preserves existing permissions, only manages hook entries
+- Offline mode: `memory install claude-code --offline` uses bundled content
+- REST endpoints: `GET /bundles` and `GET /bundles/{agent_type}` on the MCP server
+
 ---
 
 ## What Stayed the Same?
@@ -91,9 +101,12 @@ Laptop (Wife)                        │   user_id scoping    │
 |------|--------|-------------|
 | `src/memory/db_pg.py` | **NEW** | PostgreSQL backend with multi-user support |
 | `src/memory/mcp_server_sse.py` | **NEW** | SSE transport MCP server with auth |
+| `src/memory/bundles.py` | **NEW** | Canonical skill bundle content (skills, hooks, settings) |
+| `src/memory/installer.py` | **NEW** | Client-side bundle install/update/status logic |
 | `src/memory/config.py` | **MODIFIED** | Added `StorageConfig`, `AuthConfig` |
 | `src/memory/core.py` | **MODIFIED** | Multi-backend factory pattern |
-| `src/memory/cli.py` | **MODIFIED** | Added `memory user add/list`, `memory mcp --transport sse` |
+| `src/memory/cli.py` | **MODIFIED** | Added `install`, `status`, `update`, `user`, `mcp --transport` |
+| `src/memory/setup.py` | **MODIFIED** | Delegates to installer when remote config available |
 | `pyproject.toml` | **MODIFIED** | Added `psycopg2-binary`, `pgvector`, `starlette`, `uvicorn` |
 | `config.yaml.example` | **NEW** | Sample config for PostgreSQL setup |
 | `SETUP_MULTIUSER.md` | **NEW** | Complete setup guide for server + clients |

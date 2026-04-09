@@ -1,6 +1,6 @@
-# Quick Start: Remote Multi-User Memory in 15 Minutes
+# Quick Start: Remote Multi-User Memory in 10 Minutes
 
-This guide gets you from **zero to working remote memory** for you and your wife in ~15 minutes.
+This guide gets you from **zero to working remote memory** for you and your wife in ~10 minutes.
 
 ---
 
@@ -126,7 +126,7 @@ curl http://localhost:8420/sse
 
 ---
 
-## Step 2: Client Setup - Your Laptop (5 minutes)
+## Step 2: Client Setup - Your Laptop (2 minutes)
 
 On your laptop:
 
@@ -134,48 +134,33 @@ On your laptop:
 # Install this fork
 pip install git+https://github.com/YOUR_USERNAME/echovault.git
 
-# Create config
-mkdir -p ~/.memory
-cat > ~/.memory/config.yaml << 'EOF'
-storage:
-  backend: postgresql
-  url: postgresql://postgres:CHANGE_ME_STRONG_PASSWORD@YOUR_VM_IP:5432/memory
-
-auth:
-  token: PASTE_YOUR_TOKEN_FROM_STEP1_HERE
-
-embedding:
-  provider: openai
-  model: text-embedding-3-small
-  api_key: sk-YOUR_OPENAI_KEY_HERE
-EOF
-
-# Configure Claude Code
-mkdir -p ~/.claude
-cat > ~/.claude/settings.json << 'EOF'
-{
-  "mcpServers": {
-    "memory": {
-      "type": "sse",
-      "url": "http://YOUR_VM_IP:8420/sse",
-      "headers": {
-        "Authorization": "Bearer PASTE_YOUR_TOKEN_HERE"
-      }
-    }
-  }
-}
-EOF
-
-# Test connection
-memory search "test"
-# Should connect to remote server and return empty results (no memories yet)
+# Install full skill bundle into your project (skills, hooks, settings, MCP config)
+cd ~/your-project
+memory install claude-code --url http://YOUR_VM_IP:8420 --token YOUR_TOKEN_FROM_STEP1
 ```
+
+That's it. This creates:
+- `.claude/skills/memory-agent/SKILL.md` — agent protocol
+- `.claude/hooks/` — 6 session lifecycle scripts
+- `.claude/settings.local.json` — hooks config
+- `.mcp.json` — MCP server connection with your token
+
+Repeat for each project you want memory in.
+
+To check what's installed: `memory status`
+To update after server upgrades: `memory update`
 
 ---
 
-## Step 3: Client Setup - Wife's Laptop (5 minutes)
+## Step 3: Client Setup - Wife's Laptop (2 minutes)
 
-Same as Step 2, but use **wife's token** instead of yours.
+Same as Step 2, but use **wife's token** instead of yours:
+
+```bash
+pip install git+https://github.com/YOUR_USERNAME/echovault.git
+cd ~/her-project
+memory install claude-code --url http://YOUR_VM_IP:8420 --token WIFE_TOKEN_FROM_STEP1
+```
 
 ---
 
@@ -308,7 +293,7 @@ You now have:
 ✅ Token-based auth
 ✅ Claude Code integration
 
-**Total time:** ~15 minutes
+**Total time:** ~10 minutes
 **Total cost:** ~$7/month
 
 Enjoy your persistent memory! 🧠

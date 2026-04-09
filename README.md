@@ -61,6 +61,78 @@ memory setup opencode --project      # writes opencode.json in project root
 memory setup codex --project         # writes .codex/config.toml + AGENTS.md
 ```
 
+### Full bundle install (recommended for Claude Code)
+
+`memory setup` only writes the MCP server config (one JSON entry). For Claude Code, there's a better option — `memory install` sets up the complete memory integration in one command:
+
+```bash
+cd ~/my-project
+memory install claude-code --url https://your-server.com --token YOUR_TOKEN
+```
+
+#### What `memory install` creates
+
+| File | Purpose |
+|------|---------|
+| `.claude/skills/memory-agent/SKILL.md` | Protocol that tells the agent **when** to load/save memories, what categories to use, and checkpoint rules. Without this, the agent doesn't know it has memory. |
+| `.claude/hooks/session-start.sh` | Runs at session start. Creates a session log file (`.claude/logs/session-*.jsonl`) and injects a short reminder that memory is active. |
+| `.claude/hooks/session-stop.sh` | Runs when the agent tries to stop. If meaningful work was done (>2 tool uses) but no `memory_save` was called, **blocks the stop** and asks the agent to save. On second stop attempt, allows through. This is the safety net that prevents forgotten saves. |
+| `.claude/hooks/log-prompt.sh` | Logs every user prompt to the session JSONL (async, never blocks). Used by the stop hook to detect activity. |
+| `.claude/hooks/log-tool-use.sh` | Logs Bash tool usage to the session JSONL. Used by the stop hook to count meaningful work. |
+| `.claude/hooks/log-memory-op.sh` | Logs Memory MCP calls (save, search, context) to the session JSONL. Used by the stop hook to detect if a save already happened. |
+| `.claude/hooks/on-commit.sh` | Detects successful `git commit` and nudges the agent to save a memory if the commit was meaningful. |
+| `.claude/settings.local.json` | Hooks configuration — wires the 6 scripts above to Claude Code lifecycle events (SessionStart, UserPromptSubmit, PostToolUse, Stop). **Merged** with existing settings: your permissions and custom hooks are preserved. |
+| `.mcp.json` | MCP server connection with your URL and Bearer token. **Merged** with existing servers: other MCP servers you have configured are preserved. |
+| `.claude/.codevault-manifest.json` | Version tracking — records bundle version, content hashes of every file, and install timestamp. Used by `memory status` and `memory update`. |
+
+#### Where does the bundle come from?
+
+The MCP server exposes REST endpoints alongside the normal MCP transport:
+
+- `GET /bundles` — lists available bundles (currently just `claude-code`)
+- `GET /bundles/claude-code` — returns the full manifest with all file contents
+
+When you run `memory install claude-code --url URL --token TOKEN`, the CLI fetches the bundle from the server, resolves template variables (your URL, token, project name), and writes everything to disk. This means all your projects get the **exact same version** of skills and hooks — no drift from manual copying.
+
+#### Keeping projects in sync
+
+```bash
+memory status              # shows installed version, modified files, update availability
+memory update              # re-fetches latest from server, writes updated files
+memory update --check      # dry run — shows what would change without writing
+memory update --force      # overwrite even if you edited hooks locally
+```
+
+`memory status` computes SHA-256 hashes of your local files and compares them to the manifest. If you edited a hook script, it shows up as "modified". `memory update` warns about conflicts and requires `--force` to overwrite your changes.
+
+URL and token for `status`/`update` are auto-resolved from your existing `.mcp.json` — no need to pass `--url`/`--token` again after initial install.
+
+#### Offline install
+
+If the server is unreachable or you just want to set up hooks without connecting to a remote server:
+
+```bash
+memory install claude-code --offline
+```
+
+This uses the bundle content embedded in the Python package itself (the same files, just read from `src/memory/bundles.py` instead of fetched over HTTP). Everything is installed the same way — skills, hooks, settings — except `.mcp.json` is **not** written (no server URL to configure). You can add the MCP config separately with `memory setup claude-code --project`.
+
+This is useful for:
+- Local-only SQLite mode (no remote server at all)
+- CI/CD environments where the server may not be accessible
+- Testing the hook/skill setup before connecting to a real server
+
+#### Settings merge behavior
+
+`memory install` never overwrites your entire `settings.local.json`. It does a targeted merge:
+
+- **`hooks`** key: bundle hooks are added/updated, identified by their command path (`.claude/hooks/*.sh`). Any hooks you added manually with different command paths are kept.
+- **`permissions`** key: never touched. Your `allow`, `deny`, and `ask` rules stay exactly as they are.
+- **`enableAllProjectMcpServers`**: set to `true` so the MCP server from `.mcp.json` is picked up.
+- A **backup** is created at `settings.local.json.bak` before every modification.
+
+Similarly, `.mcp.json` merge adds/updates the `memory` server entry but preserves any other servers you have configured.
+
 ### Configure embeddings (optional)
 
 Embeddings enable semantic search. Without them, you still get fast keyword search via FTS5.
@@ -123,7 +195,7 @@ Once set up, your agent uses memory via MCP tools:
 
 The MCP tool descriptions instruct agents to save and retrieve automatically. No manual prompting needed in most cases.
 
-**Auto-save hooks (Claude Code)** — Optional hooks that ensure Claude always saves learnings before ending a session. See [docs/auto-save-hooks.md](docs/auto-save-hooks.md) for setup.
+**Auto-save hooks (Claude Code)** — `memory install claude-code` sets up session hooks that log activity and block the agent from stopping without saving. If you prefer manual setup, see the `starter-kit/` directory.
 
 You can also use the CLI directly:
 
@@ -168,32 +240,63 @@ For long details, use `--details-file notes.md`. To scaffold structured details 
 
 | Agent | Setup command | What gets installed |
 |-------|-------------|-------------------|
-| Claude Code | `memory setup claude-code` | MCP server in `.mcp.json` (project) or `~/.claude.json` (global) |
+| Claude Code | `memory install claude-code` | Full bundle: skills, hooks, settings, `.mcp.json` |
+| Claude Code | `memory setup claude-code` | MCP server config only (`.mcp.json` or `~/.claude.json`) |
 | Cursor | `memory setup cursor` | MCP server in `.cursor/mcp.json` |
 | Codex | `memory setup codex` | MCP server in `.codex/config.toml` + `AGENTS.md` fallback |
-| OpenCode | `memory setup opencode` | MCP server in `opencode.json` (project) or `~/.config/opencode/opencode.json` (global) |
+| OpenCode | `memory setup opencode` | MCP server in `opencode.json` or `~/.config/opencode/opencode.json` |
 
 All agents share the same memory vault at your effective `memory_home` path (default `~/.memory/`). A memory saved by Claude Code is searchable from Cursor, Codex, or OpenCode.
 
 ## Commands
 
+### Bundle management
+
 | Command | Description |
 |---------|-------------|
-| `memory init` | Create vault at effective memory home |
-| `memory setup <agent>` | Install MCP server config for an agent |
-| `memory uninstall <agent>` | Remove MCP server config for an agent |
-| `memory save ...` | Save a memory (`--details-file` and `--details-template` supported) |
-| `memory search "query"` | Hybrid FTS + semantic search |
-| `memory details <id>` | Full details for a memory |
+| `memory install claude-code --url URL --token TOKEN` | Fetch bundle from server, install skills + hooks + settings + `.mcp.json` into current project |
+| `memory install claude-code --offline` | Same as above but from local Python package — no server needed, no `.mcp.json` written |
+| `memory status` | Show installed bundle version, list locally modified files, check if server has a newer version |
+| `memory update` | Re-fetch bundle from server and update all managed files. Warns if you edited hooks locally |
+| `memory update --check` | Dry run — show what would change without writing anything |
+| `memory update --force` | Overwrite locally modified files without warning |
+
+### Setup (MCP config only, no hooks)
+
+| Command | Description |
+|---------|-------------|
+| `memory setup <agent>` | Write MCP server entry for an agent (claude-code, cursor, codex, opencode) |
+| `memory uninstall <agent>` | Remove MCP server entry |
+
+### Memory operations
+
+| Command | Description |
+|---------|-------------|
+| `memory save ...` | Save a memory (`--title`, `--what` required; `--details-file`, `--details-template` supported) |
+| `memory search "query"` | Hybrid FTS + semantic search (`--limit`, `--project`, `--source`, `--agent`) |
+| `memory details <id>` | Full details for a memory (when search shows "Details: available") |
 | `memory delete <id>` | Delete a memory by ID or prefix |
-| `memory context --project` | List memories for current project |
-| `memory sessions` | List session files |
-| `memory config` | Show effective config |
-| `memory config init` | Generate a starter config.yaml |
+| `memory context --project` | List memories for current project (`--limit`, `--semantic`, `--fts-only`) |
+| `memory sessions` | List session files (`--limit`, `--project`) |
+| `memory reindex` | Rebuild vector embeddings after changing provider |
+
+### Configuration
+
+| Command | Description |
+|---------|-------------|
+| `memory init` | Create vault at effective memory home (or run PG migrations) |
+| `memory config` | Show effective config (memory home, embedding provider, storage backend) |
+| `memory config init` | Generate a starter `config.yaml` with defaults |
 | `memory config set-home <path>` | Persist default memory location |
 | `memory config clear-home` | Remove persisted memory location |
-| `memory reindex` | Rebuild vectors after changing provider |
-| `memory mcp` | Start the MCP server (stdio transport) |
+| `memory mcp` | Start the MCP server (`--transport stdio\|sse\|http`, `--port`, `--host`) |
+
+### User management (PostgreSQL only)
+
+| Command | Description |
+|---------|-------------|
+| `memory user add <name>` | Create a user, print their auth token |
+| `memory user list` | List all users |
 
 ## Uninstall
 

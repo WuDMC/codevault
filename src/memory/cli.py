@@ -794,6 +794,114 @@ def todo_done(todo_id):
         svc.close()
 
 
+# ---------------------------------------------------------------------------
+# Bundle install / status / update commands
+# ---------------------------------------------------------------------------
+
+@main.group()
+def install():
+    """Install skill bundle from MCP server into current project."""
+    pass
+
+
+@install.command("claude-code")
+@click.option("--url", default=None, help="MCP server URL (or CODEVAULT_URL env)")
+@click.option("--token", default=None, help="Bearer auth token (or CODEVAULT_TOKEN env)")
+@click.option("--project-name", default=None, help="Project name (auto-detected from directory)")
+@click.option("--offline", is_flag=True, default=False, help="Use bundled content (no server needed)")
+def install_claude_code(url, token, project_name, offline):
+    """Install Claude Code skill bundle (skills, hooks, settings, MCP config)."""
+    from memory.installer import (
+        fetch_bundle,
+        fetch_bundle_local,
+        install_bundle,
+        resolve_connection_params,
+    )
+
+    project_dir = os.getcwd()
+
+    if offline:
+        bundle = fetch_bundle_local("claude-code")
+        result = install_bundle(
+            bundle, project_dir,
+            project_name=project_name or "",
+        )
+        click.echo(result.message)
+        return
+
+    # Resolve URL and token from args, env, or existing config
+    if not url or not token:
+        auto_url, auto_token = resolve_connection_params(project_dir)
+        url = url or auto_url
+        token = token or auto_token
+
+    if not url or not token:
+        click.echo("Error: --url and --token are required (or set CODEVAULT_URL / CODEVAULT_TOKEN)", err=True)
+        click.echo("Use --offline to install from local package without a server.", err=True)
+        return
+
+    try:
+        bundle = fetch_bundle(url, token, "claude-code")
+    except RuntimeError as e:
+        click.echo(f"Error fetching bundle: {e}", err=True)
+        return
+
+    result = install_bundle(
+        bundle, project_dir,
+        server_url=url,
+        auth_token=token,
+        project_name=project_name or "",
+    )
+    click.echo(result.message)
+    for w in result.warnings:
+        click.echo(f"  Warning: {w}")
+    if result.files_written:
+        click.echo(f"  Files: {', '.join(result.files_written)}")
+
+
+@main.command("status")
+def bundle_status():
+    """Check installed bundle status vs server."""
+    from memory.installer import check_status, resolve_connection_params
+
+    project_dir = os.getcwd()
+    url, token = resolve_connection_params(project_dir)
+    result = check_status(project_dir, url, token)
+
+    click.echo(result.message)
+    if result.modified_files:
+        click.echo("  Modified files:")
+        for f in result.modified_files:
+            click.echo(f"    - {f}")
+    if result.server_version > result.local_version:
+        click.echo(f"  Run 'memory update' to upgrade to v{result.server_version}")
+
+
+@main.command("update")
+@click.option("--force", is_flag=True, default=False, help="Overwrite locally modified files")
+@click.option("--check", "dry_run", is_flag=True, default=False, help="Dry run — show what would change")
+def bundle_update(force, dry_run):
+    """Update installed bundle from MCP server."""
+    from memory.installer import update_bundle, resolve_connection_params
+
+    project_dir = os.getcwd()
+    url, token = resolve_connection_params(project_dir)
+
+    if not url or not token:
+        click.echo("Error: cannot resolve server URL and token", err=True)
+        click.echo("Set CODEVAULT_URL / CODEVAULT_TOKEN or install first.", err=True)
+        return
+
+    result = update_bundle(project_dir, url, token, force=force, dry_run=dry_run)
+    click.echo(result.message)
+    if result.conflicts:
+        click.echo("  Conflicts:")
+        for f in result.conflicts:
+            click.echo(f"    - {f}")
+    if result.files_updated:
+        click.echo(f"  Updated: {', '.join(result.files_updated)}")
+
+
 @main.command()
 @click.option("--transport", type=click.Choice(["stdio", "sse", "http"]), default="stdio", help="Transport type")
 @click.option("--port", type=int, default=8420, help="Port for SSE/HTTP transport")
@@ -927,8 +1035,31 @@ def mcp(transport, port, host):
                     session["service"].close()
                 sessions.clear()
 
+        # --- Bundle REST endpoints ---
+        async def handle_bundles_list(request: Request):
+            """GET /bundles — list available skill bundles."""
+            user_id, error = _auth_user(request)
+            if error:
+                return JSONResponse({"error": error}, status_code=401)
+            from memory.bundles import list_bundles
+            return JSONResponse(list_bundles())
+
+        async def handle_bundle_get(request: Request):
+            """GET /bundles/{agent_type} — return full bundle manifest."""
+            user_id, error = _auth_user(request)
+            if error:
+                return JSONResponse({"error": error}, status_code=401)
+            agent_type = request.path_params["agent_type"]
+            from memory.bundles import get_bundle
+            bundle = get_bundle(agent_type)
+            if not bundle:
+                return JSONResponse({"error": f"Bundle '{agent_type}' not found"}, status_code=404)
+            return JSONResponse(bundle)
+
         app = Starlette(
             routes=[
+                Route("/bundles", endpoint=handle_bundles_list),
+                Route("/bundles/{agent_type}", endpoint=handle_bundle_get),
                 Mount("", app=handle_mcp),
             ],
             lifespan=lifespan,
@@ -991,7 +1122,38 @@ def mcp(transport, port, host):
 
             return Response()
 
+        # --- Bundle REST endpoints (SSE transport) ---
+        async def handle_bundles_list_sse(request: Request):
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header[7:] if auth_header.startswith("Bearer ") else None
+            if not token and config.storage.backend == "postgresql":
+                return JSONResponse({"error": "Token required"}, status_code=401)
+            if token and config.storage.backend == "postgresql":
+                uid = resolve_user_id_from_token(token)
+                if not uid:
+                    return JSONResponse({"error": "Invalid token"}, status_code=401)
+            from memory.bundles import list_bundles
+            return JSONResponse(list_bundles())
+
+        async def handle_bundle_get_sse(request: Request):
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header[7:] if auth_header.startswith("Bearer ") else None
+            if not token and config.storage.backend == "postgresql":
+                return JSONResponse({"error": "Token required"}, status_code=401)
+            if token and config.storage.backend == "postgresql":
+                uid = resolve_user_id_from_token(token)
+                if not uid:
+                    return JSONResponse({"error": "Invalid token"}, status_code=401)
+            agent_type = request.path_params["agent_type"]
+            from memory.bundles import get_bundle
+            bundle = get_bundle(agent_type)
+            if not bundle:
+                return JSONResponse({"error": f"Bundle '{agent_type}' not found"}, status_code=404)
+            return JSONResponse(bundle)
+
         app = Starlette(routes=[
+            Route("/bundles", endpoint=handle_bundles_list_sse),
+            Route("/bundles/{agent_type}", endpoint=handle_bundle_get_sse),
             Route("/sse", endpoint=handle_sse),
             Mount("/messages/", app=sse_transport.handle_post_message),
         ])

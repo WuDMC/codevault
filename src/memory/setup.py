@@ -453,7 +453,45 @@ def _get_claude_mcp_path(claude_home: str, project: bool) -> str:
 
 
 def setup_claude_code(claude_home: str, *, project: bool = False) -> dict[str, str]:
-    """Install EchoVault MCP server into Claude Code."""
+    """Install EchoVault MCP server into Claude Code.
+
+    If a remote server URL and token can be resolved (from env vars or
+    existing .mcp.json), delegates to the new bundle installer which
+    installs skills, hooks, settings, and MCP config in one step.
+
+    Falls back to the legacy local-only install (stdio MCP config only)
+    when no remote server is available.
+    """
+    # Try to delegate to the full bundle installer for remote mode
+    try:
+        from memory.installer import (
+            fetch_bundle_local,
+            install_bundle,
+            resolve_connection_params,
+        )
+
+        project_dir = os.path.dirname(claude_home) if project else os.getcwd()
+        url, token = resolve_connection_params(project_dir)
+
+        if url and token:
+            # Remote mode: install full bundle (skills + hooks + settings + mcp)
+            try:
+                from memory.installer import fetch_bundle
+                bundle = fetch_bundle(url, token, "claude-code")
+            except RuntimeError:
+                # Server unreachable — use local bundle
+                bundle = fetch_bundle_local("claude-code")
+
+            result = install_bundle(
+                bundle, project_dir,
+                server_url=url,
+                auth_token=token,
+            )
+            return {"status": "ok", "message": result.message}
+    except ImportError:
+        pass  # installer not available — fall through to legacy
+
+    # Legacy local-only install (stdio MCP config only)
     installed = []
 
     # Clean old hooks from settings.json if present
@@ -481,7 +519,9 @@ def setup_claude_code(claude_home: str, *, project: bool = False) -> dict[str, s
         installed.append(f"mcpServers in {scope}")
 
     if installed:
-        return {"status": "ok", "message": f"Installed: {', '.join(installed)}"}
+        msg = f"Installed: {', '.join(installed)}"
+        msg += "\nTip: Use 'memory install claude-code --url URL --token TOKEN' for full bundle install (skills + hooks + settings)"
+        return {"status": "ok", "message": msg}
     return {"status": "ok", "message": "Already installed"}
 
 

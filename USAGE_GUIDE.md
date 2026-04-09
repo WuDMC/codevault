@@ -85,6 +85,16 @@ memory_id — Full UUID or prefix (at least 8 chars)
 
 ## CLI Commands
 
+### Setup & Bundle Commands
+
+| Command | Description |
+|---------|-------------|
+| `memory install claude-code` | Install full skill bundle into project (`--url`, `--token`, `--offline`) |
+| `memory status` | Check installed bundle version and locally modified files |
+| `memory update` | Update bundle from server (`--force` to overwrite, `--check` for dry run) |
+| `memory setup <agent>` | Install MCP server config only (claude-code, cursor, codex, opencode) |
+| `memory uninstall <agent>` | Remove MCP server config |
+
 ### Core Commands
 
 | Command | Description |
