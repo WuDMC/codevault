@@ -310,6 +310,74 @@ All agents share the same memory vault at your effective `memory_home` path (def
 | `memory user add <name>` | Create a user, print their auth token |
 | `memory user list` | List all users |
 
+## Using Memory with Subagents and Multi-Agent Workflows
+
+The memory system is designed to work across multiple agents — whether you're spawning subagents from Claude Code, running agent teams, or building custom agents with the Agent SDK.
+
+### Key facts
+
+| | MCP tools (memory_*) | Skills (.claude/skills/) | TaskList |
+|---|---|---|---|
+| **Main session** | Yes | Yes (auto-loaded) | Yes |
+| **Subagents (Agent tool)** | Yes (inherited) | **No** (must include in prompt) | **No** (isolated) |
+| **Agent teams (teammates)** | Yes (from project config) | Yes (from .claude/skills/) | Shared task list |
+| **Worktree-isolated agents** | Yes (inherited) | **No** | **No** |
+
+### Spawning a subagent with memory
+
+Subagents inherit MCP server connections but do NOT inherit skills. You must include the memory protocol in the subagent's prompt:
+
+```python
+Agent(
+  prompt="""You are a developer working on epic #42 (ticket AUTH-123).
+    Your task: implement the JWT token issuer.
+
+    MEMORY PROTOCOL:
+    - Call memory_epic_get(epic_id=42) to see the full checklist
+    - Call memory_search(query='JWT auth') for prior decisions
+    - When done: memory_save(title=..., epic_id=42, agent='developer')
+    - Update checklist: memory_epic_update(epic_id=42, description='...')
+    """,
+  subagent_type="general-purpose"
+)
+```
+
+### Multi-agent handoff pattern
+
+```
+1. Architect session:
+   → memory_epic_add(title="Auth refactor", ticket="AUTH-123", description="checklist...")
+   → spawns developer subagent with epic_id in prompt
+   → developer works, saves memories, updates checklist
+   → architect reads result, spawns next subagent for next step
+
+2. Each subagent:
+   → memory_epic_get(epic_id) — reads current checklist
+   → does its step
+   → memory_save(epic_id=..., agent="developer") — saves decisions
+   → memory_epic_update(epic_id, description="updated checklist")
+
+3. New session (next day):
+   → memory_context() — sees epic with progress from yesterday
+   → continues from where subagents left off
+```
+
+### Custom agents (Agent SDK / API)
+
+Custom agents built with `claude_agent_sdk` or calling the API directly:
+- Configure MCP server in `.mcp.json` or pass it in agent config
+- Use `source="api"` and `agent="autonomous:<role>"` in memory_save
+- Must call `memory_context()` at startup — no hooks to remind them
+- Must call `memory_save()` before finishing — no stop hook to enforce it
+
+### Autonomous / scheduled agents
+
+For agents running on a schedule (`/schedule`, cron jobs):
+- Hardcode the epic_id or ticket in the agent's prompt
+- Always call `memory_context()` first — there's no user to provide context
+- Always call `memory_save()` before finishing — there's no session-stop hook
+- Use `agent="autonomous:reviewer"` or `agent="autonomous:monitor"` to tag the source
+
 ## Uninstall
 
 ```bash

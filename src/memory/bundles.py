@@ -12,7 +12,7 @@ import json
 # Bundle version — increment when any content changes
 # ---------------------------------------------------------------------------
 
-BUNDLE_VERSION = 3
+BUNDLE_VERSION = 4
 
 # ---------------------------------------------------------------------------
 # Canonical SKILL.md (MCP-based, universal)
@@ -31,67 +31,74 @@ You have three distinct layers of work tracking. **Each solves a different probl
 ## The Three Layers
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ LAYER 1 — EPHEMERAL (in-conversation work tracking)          │
-│   Tool: TaskCreate / TaskUpdate / TaskList                   │
-│   Scope: current conversation only                           │
-│   Lifetime: dies with the session                            │
-│   Use for: "right now I'm doing X, then Y, then Z"           │
-└──────────────────────────────────────────────────────────────┘
-                            ↓
-┌──────────────────────────────────────────────────────────────┐
-│ LAYER 2 — EPIC (multi-session work tracking)                 │
-│   Tool: memory_epic_* (add, get, find, list, update)         │
-│   Scope: project, persists across sessions                   │
-│   Lifetime: until done or cancelled                          │
-│   Structure: Markdown checklist inside each epic             │
-│   Use for: features, refactors, bugs that span sessions      │
-└──────────────────────────────────────────────────────────────┘
-                            ↓
-┌──────────────────────────────────────────────────────────────┐
-│ LAYER 3 — LONG-TERM (project knowledge base)                 │
-│   Tool: memory_save / memory_search / memory_context         │
-│   Scope: project (searchable across all projects)            │
-│   Lifetime: forever                                          │
-│   Use for: decisions, bug root causes, patterns, learnings   │
-└──────────────────────────────────────────────────────────────┘
+LAYER 1 — EPHEMERAL (in-conversation work tracking)
+  Tool: TaskCreate / TaskUpdate / TaskList
+  Scope: current conversation only. Dies with the session.
+  Use for: "right now I'm doing X, then Y, then Z"
+
+LAYER 2 — EPIC (multi-session work tracking)
+  Tool: memory_epic_add / memory_epic_get / memory_epic_find / memory_epic_update
+  Scope: project, persists across sessions. Markdown checklist inside.
+  Use for: features, refactors, bug investigations that span sessions
+
+LAYER 3 — LONG-TERM (project knowledge base)
+  Tool: memory_save / memory_search / memory_context
+  Scope: project, searchable across all projects. Forever.
+  Use for: decisions, bug root causes, patterns, learnings
 ```
 
 ---
 
-## Session Start — MANDATORY
+## Session Start — MANDATORY, PROACTIVE, IMMEDIATE
 
-Before doing ANY work:
+**BEFORE your first response** to the user, you MUST execute these steps. Do not wait for the user to ask. Do not skip any step. Do not start working until all steps are done.
 
-1. **Load context:** `memory_context(project="{{project_name}}", limit=10)` — returns recent memories + active epics
-2. **Identify your epic:**
-   - If user specified a ticket → `memory_epic_find(ticket="AUTH-123")`
-   - If context shows 1 active epic (excluding Backlog) → use it
-   - If multiple active epics → ask the user which one
-   - If user says "adhoc" or small task → use the Backlog epic (auto-created)
-   - **You MUST work within an epic. Do not start without one.**
-3. **Load epic checklist:** `memory_epic_get(epic_id)` — see current progress
-4. **Search for specifics** (only if needed): `memory_search(query="<topic>")`
-5. **Fetch details:** if any result has `has_details=true`, call `memory_details(memory_id)`
+**Step 1 — Load context (ALWAYS, FIRST):**
+```
+memory_context(project="{{project_name}}", limit=10)
+```
+This returns recent memories AND active epics (including auto-created Backlog).
 
-Do not skip these steps.
+**Step 2 — Identify your epic (ALWAYS, BEFORE ANY WORK):**
+
+| Situation | Action |
+|-----------|--------|
+| User said a ticket name ("work on AUTH-123") | `memory_epic_find(ticket="AUTH-123")` |
+| Context shows exactly 1 active epic (not Backlog) | Use it — say "I'll continue epic #N: Title" |
+| Context shows multiple active epics | Ask: "Which epic? [list them]" — **do not guess** |
+| User said "adhoc" / "just fix this" / no ticket | Use the Backlog epic from context |
+| You were spawned as a subagent with epic_id in prompt | Use the epic_id from your prompt |
+
+**You MUST work within an epic. Do not start coding without one.**
+
+**Step 3 — Load epic checklist:**
+```
+memory_epic_get(epic_id=<id from step 2>)
+```
+Read the checklist. Know what's done, what's next.
+
+**Step 4 — Search if needed:**
+If the user's request relates to a specific topic, search for prior decisions:
+```
+memory_search(query="<relevant topic>")
+```
+If any result has `has_details=true`, call `memory_details(memory_id)`.
 
 ---
 
-## Layer 1: TaskCreate / TaskUpdate / TaskList
+## Layer 1: TaskCreate (in-session progress)
 
-**Use when:** the current request requires 3+ discrete steps and you want to show progress.
+**Use when:** 3+ discrete steps in the current response.
 
-**Lifecycle:**
-1. At task start: `TaskCreate(subject="...", description="...", activeForm="...")`
-2. When starting work: `TaskUpdate(taskId="1", status="in_progress")`
-3. When done: `TaskUpdate(taskId="1", status="completed")` — **immediately, do not batch**
-4. End of session: do nothing — tasks die with the conversation
+```
+TaskCreate(subject="Implement JWT issuer", activeForm="Implementing JWT issuer")
+TaskUpdate(taskId="1", status="in_progress")
+# ... do the work ...
+TaskUpdate(taskId="1", status="completed")  ← IMMEDIATELY when done, do not batch
+```
 
-**DO NOT:**
-- Use TaskCreate for things that should survive the session — that's layer 2 (epics)
-- Use TaskCreate for trivial single-step work
-- Pass tasks to subagents via the task list — **subagents do not see parent tasks**
+**Do NOT** use TaskCreate for work that should survive the session — that's epics.
+**Do NOT** pass tasks to subagents via TaskList — they can't see them. Pass via prompt.
 
 ---
 
@@ -99,26 +106,28 @@ Do not skip these steps.
 
 Every piece of work belongs to an epic. There are no standalone TODOs.
 
-### Creating an epic
+### Creating an epic (architect/user role)
 
 ```
 memory_epic_add(
   project="{{project_name}}",
   title="Refactor auth module to JWT",
-  ticket="AUTH-123",           # optional — links to external tracker
+  ticket="AUTH-123",
   description="- [ ] Audit session usage\\n- [ ] Design JWT schema\\n- [ ] Implement token issuer\\n- [ ] Update tests"
 )
 ```
+Create when: there's a ticket, OR work has 3+ steps, OR it will span sessions.
 
-### Finding an epic by ticket
+### Finding an epic
 
 ```
-memory_epic_find(ticket="AUTH-123")
+memory_epic_find(ticket="AUTH-123")       # by ticket name
+memory_epic_get(epic_id=42)               # by ID (when you know it)
 ```
 
-### Updating the checklist
+### Updating the checklist (PROACTIVE — do this as you complete steps)
 
-When you complete a step, rewrite the full checklist with updated marks:
+Rewrite the full checklist with updated marks. **Do this after completing each major step, not just at session end.**
 
 ```
 memory_epic_update(
@@ -129,151 +138,196 @@ memory_epic_update(
 
 ### Closing an epic
 
-When all checklist items are done:
-
+When ALL checklist items are done:
 ```
 memory_epic_update(epic_id=42, status="done")
 ```
 
 ### The Backlog epic
 
-Every project has a special Backlog epic (auto-created, ticket="_backlog"). Use it for:
-- Adhoc tasks that don't have a ticket
-- Quick fixes and micro-tasks
-- Work the user says "just do it, no ticket needed"
+Every project has a Backlog epic (auto-created, ticket="_backlog"). Use for:
+- Adhoc tasks without a ticket
+- Quick fixes, micro-tasks
+- "Just do it" work
 
-Add items to Backlog by updating its checklist:
-```
-memory_epic_update(epic_id=<backlog_id>, description="<existing checklist>\\n- [ ] New adhoc item")
-```
+Add items: `memory_epic_update(epic_id=<backlog_id>, description="<existing>\\n- [ ] New item")`
 
-### Role rules for epics
+### Role rules
 
-- **User** tells architect/developer which ticket/epic to work on
-- **Architect** creates epics, plans checklists, assigns work
-- **Developer** MUST work within a given epic. **Do NOT call `memory_epic_list`** — you work only on the epic assigned to you. If no epic was assigned, ask the user.
-- If the user doesn't specify a ticket → ask: "Which epic should I work on, or is this an adhoc task?"
-
-### When to create an epic
-
-- **Always** if there's a ticket (AUTH-123, github#45, etc.)
-- **When** work has 3+ steps or will span multiple sessions
-- **Never** for truly trivial work — use Backlog instead
+| Role | Can create epics | Can list all epics | Must be assigned epic |
+|------|-----------------|-------------------|----------------------|
+| **User/Architect** | Yes | Yes (`memory_epic_list`) | No — they assign |
+| **Developer** | Only Backlog items | **No** — only works on assigned epic | **Yes** — ask if none given |
+| **Reviewer** | No | Can read assigned epic | Reads, doesn't manage |
 
 ---
 
 ## Layer 3: memory_save (knowledge base)
 
-**Use when:** work is done and the *reasoning* should survive. Save the decision, not the diff.
+**Use when:** work is done and the *reasoning* should survive.
 
 ```
 memory_save(
-  title="Short descriptive title",
-  what="What happened or was decided",
-  why="Reasoning behind it",
-  impact="What changed as a result",
-  tags=["tag1", "tag2"],
+  title="Chose jose library for JWT signing",
+  what="Selected jose over jsonwebtoken for JWT implementation",
+  why="jose supports EdDSA and has better TypeScript types",
+  impact="All auth endpoints now use jose for token signing",
+  tags=["auth", "jwt"],
   category="decision",
-  related_files=["path/to/file"],
+  related_files=["src/auth/jwt.ts"],
   project="{{project_name}}",
   source="claude-code",
   agent="developer",
-  epic_id=42                    # links memory to epic, auto-adds ticket as tag
+  epic_id=42
 )
 ```
 
-Categories: `decision`, `bug`, `pattern`, `setup`, `learning`, `context`.
+**ALWAYS pass `epic_id`** — auto-adds the ticket as a tag.
 
-**Always pass `epic_id`** when working within an epic. This links the memory to the epic and auto-adds the ticket as a tag.
+**Categories:** `decision` | `bug` | `pattern` | `setup` | `learning` | `context`
 
-### ALWAYS save (high signal):
+### The `source` and `agent` fields
+
+**source** — which client/IDE:
+- `"claude-code"` — Claude Code CLI or desktop
+- `"cursor"` — Cursor IDE
+- `"codex"` — Codex CLI
+- `"api"` — custom agent via API
+
+**agent** — your role in this session:
+- `"interactive"` — human is driving (default for CLI)
+- `"developer"` — writing/modifying code
+- `"architect"` — designing systems, planning epics
+- `"reviewer"` — checking correctness
+
+### ALWAYS save (proactively, immediately after the event):
 - Architectural or design decisions (with alternatives considered)
-- Bug root causes and fixes (not just "fixed it" — the *why*)
-- Non-obvious patterns or gotchas discovered
+- Bug root causes and fixes (the *why*, not just "fixed it")
+- Non-obvious patterns or gotchas
 - Infrastructure, tooling, or configuration changes
 - User corrections or clarified requirements
+- **After every successful commit** — save the rationale
+- **After tests pass/fail** — save what you learned
+- **After resolving a bug** — save root cause + fix
+- **When user confirms a design choice** — save with alternatives
 
-### NEVER save (noise):
-- Trivial changes (typo fixes, formatting)
-- Information already obvious from reading the code
-- Duplicate of an existing memory (search first!)
-
-### Checkpoint saves
-
-1. **After a successful commit** — save the decision or change rationale
-2. **After tests pass/fail** — save test configuration decisions or discovered issues
-3. **After resolving a bug** — save root cause, fix, and what you learned
-4. **When user confirms a design choice** — save with alternatives considered
-
----
-
-## Decision Tree: which layer?
-
-```
-Is this work happening RIGHT NOW in this response?
-├── YES → Layer 1 (TaskCreate) if 3+ steps, otherwise nothing
-└── NO
-    ├── Is it a closed decision/learning/bug fix?
-    │   └── YES → Layer 3 (memory_save with epic_id)
-    └── Is it work for later in this epic?
-        └── YES → Update epic checklist (memory_epic_update)
-```
-
-**Examples:**
-
-| Situation | Layer | Tool |
-|-----------|-------|------|
-| "I'll create the file, then add the function, then write the test" | 1 | TaskCreate (3 tasks) |
-| "We decided to use JWT instead of sessions" | 3 | memory_save(epic_id=42) |
-| "Still need to update tests, will do next session" | 2 | memory_epic_update(checklist) |
-| "Renaming this variable" | none | just do it |
-| "Bug root cause: cache TTL was 0" | 3 | memory_save(category="bug", epic_id=42) |
-| "User wants dark mode but not now" | 2 | add to Backlog checklist |
-| "Building this feature in 5 steps" | 1 | TaskCreate (5 tasks) |
+### NEVER save:
+- Trivial changes (typos, formatting)
+- Info obvious from reading the code
+- Duplicates (search first!)
 
 ---
 
 ## Session End — MANDATORY
 
-Before ending your response to ANY task that involved changes, debugging, deciding, or learning:
+Before ending ANY session where you did meaningful work:
 
-1. **Update epic checklist** (layer 2): mark completed steps, add new discovered steps
-2. **Save knowledge** (layer 3): `memory_save` for every distinct decision/bug/pattern (with `epic_id`)
-3. **Close epic if done**: `memory_epic_update(epic_id, status="done")` if all steps complete
-4. **Mark layer 1 tasks complete**: any in-flight TaskCreate items should be `completed` or `deleted`
+1. **Update epic checklist** — mark completed steps, add newly discovered steps
+2. **Save knowledge** — `memory_save` for each distinct decision/bug/pattern (with `epic_id`)
+3. **Close epic if done** — `memory_epic_update(epic_id, status="done")` if all steps complete
+4. **Complete layer 1 tasks** — mark any in-flight TaskCreate as `completed` or `deleted`
 
----
-
-## Agent Roles
-
-Use the `agent` field on `memory_save`:
-
-- **developer**: Writing/modifying code, fixing bugs
-- **architect**: Designing systems, choosing patterns, schema evolution
-- **reviewer**: Reviewing code, checking correctness
-
-Filter by agent: `memory_search(query="...", agent="architect")`
+The session-stop hook will **block you from stopping** if you did >2 tool uses but never called `memory_save` or `memory_epic_update`. Save your work first.
 
 ---
 
-## Subagents
+## Subagents and Multi-Agent Workflows
 
-- **Subagents do NOT see parent tasks** — their TaskList is independent
-- **Subagents DO see the same MCP memory** — they can call `memory_save`, `memory_epic_*` directly
-- **Pass work via prompt**, not via task list
-- **Parent owns the task tracking** — use TaskCreate in parent to track each subagent
+### Key facts about subagents
+
+- **Subagents inherit MCP servers** from the parent — they CAN call memory_save, memory_epic_*, memory_search directly.
+- **Subagents do NOT inherit skills** — the parent must include memory instructions in the subagent's prompt.
+- **Subagents do NOT see parent's TaskList** — pass work via prompt, not tasks.
+- **Subagents in worktrees** (`isolation: "worktree"`) still access the same MCP servers.
+
+### How to spawn a subagent with memory access
+
+The parent MUST include epic context in the subagent's prompt:
+
+```
+Agent(
+  prompt="You are a developer working on epic #42 (ticket AUTH-123).
+    Your task: implement the JWT token issuer (step 3 of the epic checklist).
+
+    MEMORY PROTOCOL:
+    - Call memory_epic_get(epic_id=42) to see full checklist
+    - Call memory_search(query='JWT auth') for prior decisions
+    - When done, call memory_save(title=..., epic_id=42, agent='developer')
+    - Update checklist: memory_epic_update(epic_id=42, description='...')
+
+    Do NOT call memory_epic_list or create new epics.",
+  subagent_type="general-purpose"
+)
+```
+
+### Multi-agent handoff pattern
+
+When architect creates work for developer subagents:
+
+```
+1. Architect: memory_epic_add(title="...", ticket="X", description="checklist")
+   → gets epic_id
+
+2. Architect: spawns Agent with prompt containing:
+   - epic_id
+   - which checklist step to work on
+   - memory protocol instructions (above)
+   - role = "developer"
+
+3. Developer subagent:
+   - memory_epic_get(epic_id) → reads checklist
+   - does the work
+   - memory_save(epic_id=epic_id, agent="developer") → saves decisions
+   - memory_epic_update(epic_id, description="updated checklist")
+   - returns result to parent
+
+4. Architect: receives result, may spawn next subagent for next step
+```
+
+### Agent teams (parallel agents)
+
+When using agent teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`):
+- Teammates load MCP servers from project settings (`.mcp.json`), NOT from subagent definition
+- Teammates DO NOT inherit skills from subagent YAML — they load from `.claude/skills/`
+- Each teammate should call `memory_context()` independently at their start
+- Use epic_id to coordinate: all teammates on the same epic see the same checklist
+
+### Autonomous / scheduled agents
+
+For agents running without user interaction (via `/schedule` or cron):
+- MUST call `memory_context()` at start — no user to tell them the epic
+- Should have epic_id hardcoded in their prompt or find it via `memory_epic_find(ticket="...")`
+- MUST call `memory_save()` before finishing — no human will remind them
+- Use `source="api"` and `agent="autonomous:<role>"` (e.g. `"autonomous:reviewer"`)
+
+---
+
+## Decision Tree
+
+```
+Is this work happening RIGHT NOW?
+├── YES → TaskCreate if 3+ steps, otherwise just do it
+└── NO
+    ├── Is it a closed decision/learning/bug fix?
+    │   └── YES → memory_save(epic_id=...)
+    └── Is it work for later in this epic?
+        └── YES → memory_epic_update(checklist)
+```
 
 ---
 
 ## Rules
 
-- Load context and identify your epic before working. Update epic and save memories before finishing. No exceptions.
-- Write memories for a future agent with zero context about this session.
-- Never include API keys, tokens, secrets, or credentials in memories.
-- Wrap sensitive values in `<redacted>` tags.
-- One memory per distinct decision or event.
-- Search before saving to avoid duplicates.
-- Always work within an epic. No standalone TODOs.
+1. **Load context FIRST.** Call `memory_context()` before your first response. No exceptions.
+2. **Identify your epic SECOND.** Do not start working without an epic_id.
+3. **Save PROACTIVELY.** Don't wait for session end — save after each major milestone.
+4. **Update checklist AS YOU GO.** Not just at the end.
+5. **Write for a stranger.** Every memory should be useful to an agent with zero context.
+6. **Never save secrets.** No API keys, tokens, passwords. Use `<redacted>` tags.
+7. **Search before saving.** Avoid duplicates.
+8. **One memory per event.** Don't bundle unrelated decisions.
+9. **Always pass epic_id.** Links memory to epic, auto-tags with ticket.
+10. **Subagents: include protocol in prompt.** They inherit MCP but NOT skills.
 """
 
 # ---------------------------------------------------------------------------
