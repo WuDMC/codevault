@@ -31,6 +31,7 @@ class RawMemoryInput:
     details: Optional[str] = None
     source: Optional[str] = None
     agent: Optional[str] = None
+    epic_id: Optional[int] = None
 
 
 @dataclass
@@ -52,6 +53,7 @@ class Memory:
     section_anchor: str
     created_at: str
     updated_at: str
+    epic_id: Optional[int] = None
 
     @staticmethod
     def from_raw(raw: RawMemoryInput, project: str, file_path: str = "") -> Memory:
@@ -74,6 +76,7 @@ class Memory:
             section_anchor=anchor,
             created_at=now,
             updated_at=now,
+            epic_id=raw.epic_id,
         )
 
 
@@ -96,16 +99,15 @@ class Project:
 
 
 @dataclass
-class TodoItem:
-    """A persistent TODO item scoped to a project."""
+class Epic:
+    """A persistent epic (multi-session work item) scoped to a project."""
 
     id: int
     project: str
+    ticket: Optional[str]
     title: str
-    description: Optional[str]
-    status: str  # pending, in_progress, done, cancelled
-    priority: int  # 0=normal, 1=high, 2=critical
-    source_memory_id: Optional[str]
+    description: str  # Markdown checklist
+    status: str  # active, done, cancelled
     created_at: str
     updated_at: str
 

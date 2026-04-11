@@ -39,19 +39,31 @@ Set `agent` to 'interactive' for human-driven sessions or 'autonomous:<role>' fo
 
 SEARCH_DESCRIPTION = """Search memories by keyword and semantic similarity. Use this to find specific memories across all projects and history. Supports filtering by project, source, and agent role. Use when you need something beyond the recent context — e.g. a memory from another project, an old decision, or a specific topic."""
 
-CONTEXT_DESCRIPTION = """Load recent memories and TODO items for the current project. You MUST call this at session start before doing any work. Returns full content (what, why, impact) so you have all prior decisions and context.
+CONTEXT_DESCRIPTION = """Load recent memories and active epics for the current project. You MUST call this at session start before doing any work. Returns full content (what, why, impact) so you have all prior decisions, and active epics with their checklists.
 
-If the response contains `todos`, create a TaskCreate for each pending TODO to populate your session task tracker. When you complete a TODO during the session, call memory_todo_update with status='done'.
+If the response contains `epics`, identify which epic to work on:
+- If the user specified a ticket → use memory_epic_find to get it
+- If only 1 active epic → use it
+- If multiple → ask the user which one
+- For adhoc work → use the Backlog epic
 
 If a memory has has_details=true, call memory_details to get the extended body. Use memory_search when you need to find something outside this project or beyond the recent limit."""
 
 DETAILS_DESCRIPTION = """Get extended details for a specific memory by ID. Only call this when has_details is true in a result from memory_context or memory_search. If has_details is false, do NOT call this — the memory has no extended details."""
 
-TODO_ADD_DESCRIPTION = """Add a TODO item to the project's persistent task list. Use this when you identify work that needs to happen in a future session — follow-ups, technical debt, planned features. The TODO persists across sessions and will be shown to the next agent that loads this project's context via memory_context."""
+EPIC_ADD_DESCRIPTION = """Create a new epic (multi-session work item). Epics group related work under a ticket or title. Use when starting significant work: a feature, a refactor, a bug fix that spans multiple steps. For adhoc tasks, use the auto-created Backlog epic instead."""
 
-TODO_UPDATE_DESCRIPTION = """Update a TODO item's status, title, description, or priority. Use this to mark TODOs as 'done' when you complete the work, or 'cancelled' if no longer needed. Always update TODO status before ending a session if you completed relevant work."""
+EPIC_GET_DESCRIPTION = """Get an epic by ID, including its full Markdown checklist. Use this to see current progress on an epic you're working on."""
 
-TODO_LIST_DESCRIPTION = """List TODO items for a project. Normally you get TODOs automatically from memory_context at session start. Use this tool to get a fresh list mid-session, or to include completed TODOs."""
+EPIC_FIND_DESCRIPTION = """Find an epic by ticket name (e.g. 'AUTH-123'). Returns the epic if found, null if not. Use at session start when the user tells you which ticket to work on."""
+
+EPIC_LIST_DESCRIPTION = """List epics for a project. Returns active epics by default. Use status='all' to include done/cancelled. Primarily for architects and users to see the full picture."""
+
+EPIC_UPDATE_DESCRIPTION = """Update an epic's status, title, or checklist. Use this to:
+- Update the Markdown checklist as you complete steps: description="- [x] done step\\n- [ ] next step"
+- Mark an epic as done when all work is complete: status="done"
+- Cancel an epic: status="cancelled"
+Always update the checklist before ending a session if you made progress."""
 
 PROJECT_REGISTER_DESCRIPTION = """Register a new project. Projects must be registered before memories can be saved to them. The project name is auto-detected from the current working directory, but must match a registered project. Use this when memory_save tells you the project is not registered."""
 
@@ -95,6 +107,7 @@ def handle_memory_save(
     project: Optional[str] = None,
     source: Optional[str] = None,
     agent: Optional[str] = None,
+    epic_id: Optional[int] = None,
 ) -> str:
     """Handle memory_save tool call. Returns JSON string."""
     project = project or os.path.basename(os.getcwd())
@@ -114,27 +127,33 @@ def handle_memory_save(
     if category and category not in VALID_CATEGORIES:
         category = "context"
 
+    # If epic_id provided, auto-add ticket as tag
+    final_tags = list(tags or [])
+    if epic_id:
+        try:
+            epic = service.get_epic(epic_id)
+            if epic and epic.get("ticket") and epic["ticket"] != "_backlog":
+                ticket_tag = epic["ticket"]
+                if ticket_tag not in final_tags:
+                    final_tags.append(ticket_tag)
+        except Exception:
+            pass
+
     raw = RawMemoryInput(
         title=title[:60],
         what=what,
         why=why,
         impact=impact,
-        tags=tags or [],
+        tags=final_tags,
         category=category,
         related_files=related_files or [],
         details=details,
         source=source,
         agent=agent,
+        epic_id=epic_id,
     )
 
     result = service.save(raw, project=project)
-
-    # Generate TODO suggestions
-    suggestions = service.generate_todo_suggestions(raw, project)
-    if suggestions.get("add") or suggestions.get("mark_done"):
-        suggestions["instructions"] = "Use memory_todo_add / memory_todo_update to apply these suggestions."
-        result["todo_suggestions"] = suggestions
-
     return json.dumps(result)
 
 
@@ -211,33 +230,44 @@ def handle_memory_context(
             "has_details": bool(r.get("has_details")),
         })
 
-    # Fetch TODOs for the project
-    todos = service.list_todos(project, statuses=["pending", "in_progress"])
-    todo_items = [
-        {
-            "id": t["id"],
-            "title": t["title"],
-            "description": t.get("description"),
-            "status": t["status"],
-            "priority": t.get("priority", 0),
-        }
-        for t in todos
-    ]
+    # Ensure Backlog epic exists for this project
+    try:
+        service.ensure_backlog_epic(project)
+    except Exception:
+        pass  # Non-PG backend or user_id not set
+
+    # Fetch active epics for the project
+    epics = service.list_epics(project, status="active")
+    epic_items = []
+    for e in epics:
+        desc = e.get("description", "")
+        # Count checklist progress
+        total_items = desc.count("- [")
+        done_items = desc.count("- [x]")
+        epic_items.append({
+            "id": e["id"],
+            "ticket": e.get("ticket"),
+            "title": e["title"],
+            "status": e["status"],
+            "checklist_progress": f"{done_items}/{total_items}" if total_items > 0 else "no checklist",
+            "description": desc[:500] if desc else "",
+        })
 
     response = {
         "total": total,
         "showing": len(memories),
         "memories": memories,
-        "todos": todo_items,
-        "message": "IMPORTANT: You MUST call memory_save before this session ends if you make any changes, decisions, or discoveries.",
+        "epics": epic_items,
+        "message": "IMPORTANT: Identify your epic before starting work. Save memories with epic_id. Update epic checklist before session ends.",
     }
 
-    if todo_items:
-        response["todo_instructions"] = (
-            "You have pending TODO items for this project. "
-            "For each TODO, call TaskCreate to add it to your session task tracker. "
-            "When you complete a TODO during this session, call memory_todo_update with status='done'."
-        )
+    if epic_items:
+        non_backlog = [e for e in epic_items if e.get("ticket") != "_backlog"]
+        if non_backlog:
+            response["epic_instructions"] = (
+                f"Active epics: {', '.join(e['title'] + ' (#' + str(e['id']) + ')' for e in non_backlog)}. "
+                "Ask the user which epic to work on, or use memory_epic_find(ticket=...) if they specify a ticket."
+            )
 
     return json.dumps(response)
 
@@ -253,51 +283,66 @@ def handle_memory_details(
     return json.dumps({"memory_id": detail.memory_id, "body": detail.body})
 
 
-def handle_memory_todo_add(
+def handle_memory_epic_add(
     service: MemoryService,
+    project: str,
     title: str,
-    description: Optional[str] = None,
-    project: Optional[str] = None,
-    priority: int = 0,
+    ticket: Optional[str] = None,
+    description: str = "",
 ) -> str:
-    """Handle memory_todo_add tool call."""
+    """Handle memory_epic_add tool call."""
     project = project or os.path.basename(os.getcwd())
-    result = service.add_todo(project, title, description, priority)
+    result = service.add_epic(project, title, ticket, description)
     return json.dumps(result)
 
 
-def handle_memory_todo_update(
+def handle_memory_epic_get(
     service: MemoryService,
-    todo_id: int,
+    epic_id: int,
+) -> str:
+    """Handle memory_epic_get tool call."""
+    result = service.get_epic(epic_id)
+    if result is None:
+        return json.dumps({"error": f"Epic {epic_id} not found"})
+    return json.dumps(result)
+
+
+def handle_memory_epic_find(
+    service: MemoryService,
+    ticket: str,
+    project: Optional[str] = None,
+) -> str:
+    """Handle memory_epic_find tool call."""
+    result = service.find_epic(ticket, project)
+    if result is None:
+        return json.dumps({"error": f"No epic found for ticket '{ticket}'"})
+    return json.dumps(result)
+
+
+def handle_memory_epic_list(
+    service: MemoryService,
+    project: Optional[str] = None,
+    status: Optional[str] = "active",
+) -> str:
+    """Handle memory_epic_list tool call."""
+    project = project or os.path.basename(os.getcwd())
+    epics = service.list_epics(project, status)
+    return json.dumps({"project": project, "epics": epics, "total": len(epics)})
+
+
+def handle_memory_epic_update(
+    service: MemoryService,
+    epic_id: int,
     status: Optional[str] = None,
     title: Optional[str] = None,
     description: Optional[str] = None,
-    priority: Optional[int] = None,
+    ticket: Optional[str] = None,
 ) -> str:
-    """Handle memory_todo_update tool call."""
-    result = service.update_todo(todo_id, status, title, description, priority)
+    """Handle memory_epic_update tool call."""
+    result = service.update_epic(epic_id, status, title, description, ticket)
     if result is None:
-        return json.dumps({"error": f"TODO {todo_id} not found"})
+        return json.dumps({"error": f"Epic {epic_id} not found"})
     return json.dumps(result)
-
-
-def handle_memory_todo_list(
-    service: MemoryService,
-    project: Optional[str] = None,
-    status: Optional[str] = None,
-    include_done: bool = False,
-) -> str:
-    """Handle memory_todo_list tool call."""
-    project = project or os.path.basename(os.getcwd())
-    statuses = None
-    if include_done:
-        statuses = ["pending", "in_progress", "done", "cancelled"]
-    elif status:
-        statuses = [status]
-    # else default (pending, in_progress)
-
-    todos = service.list_todos(project, statuses)
-    return json.dumps({"project": project, "todos": todos, "total": len(todos)})
 
 
 def handle_memory_project_register(
@@ -366,6 +411,7 @@ def create_mcp_server(service: MemoryService) -> Server:
                                 "Default: 'interactive'."
                             ),
                         },
+                        "epic_id": {"type": "integer", "description": "Epic ID to link this memory to. Auto-adds epic's ticket as tag."},
                     },
                     "required": ["title", "what"],
                 },
@@ -410,48 +456,66 @@ def create_mcp_server(service: MemoryService) -> Server:
                 },
             ),
             Tool(
-                name="memory_todo_add",
-                description=TODO_ADD_DESCRIPTION,
+                name="memory_epic_add",
+                description=EPIC_ADD_DESCRIPTION,
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string", "description": "TODO title."},
-                        "description": {"type": "string", "description": "Detailed description of the work."},
                         "project": {"type": "string", "description": "Project name. Auto-detected from cwd if omitted."},
-                        "priority": {"type": "integer", "enum": [0, 1, 2], "description": "0=normal, 1=high, 2=critical. Default: 0."},
+                        "title": {"type": "string", "description": "Epic title."},
+                        "ticket": {"type": "string", "description": "Ticket reference (e.g. 'AUTH-123'). Optional."},
+                        "description": {"type": "string", "description": "Markdown checklist of steps. e.g. '- [ ] step 1\\n- [ ] step 2'"},
                     },
                     "required": ["title"],
                 },
             ),
             Tool(
-                name="memory_todo_update",
-                description=TODO_UPDATE_DESCRIPTION,
+                name="memory_epic_get",
+                description=EPIC_GET_DESCRIPTION,
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "todo_id": {"type": "integer", "description": "TODO ID from memory_context or memory_todo_list."},
-                        "status": {
-                            "type": "string",
-                            "enum": ["pending", "in_progress", "done", "cancelled"],
-                            "description": "New status.",
-                        },
-                        "title": {"type": "string", "description": "Updated title."},
-                        "description": {"type": "string", "description": "Updated description."},
-                        "priority": {"type": "integer", "enum": [0, 1, 2], "description": "Updated priority."},
+                        "epic_id": {"type": "integer", "description": "Epic ID."},
                     },
-                    "required": ["todo_id"],
+                    "required": ["epic_id"],
                 },
             ),
             Tool(
-                name="memory_todo_list",
-                description=TODO_LIST_DESCRIPTION,
+                name="memory_epic_find",
+                description=EPIC_FIND_DESCRIPTION,
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "ticket": {"type": "string", "description": "Ticket name to search for (e.g. 'AUTH-123')."},
+                        "project": {"type": "string", "description": "Filter to project."},
+                    },
+                    "required": ["ticket"],
+                },
+            ),
+            Tool(
+                name="memory_epic_list",
+                description=EPIC_LIST_DESCRIPTION,
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "project": {"type": "string", "description": "Project name. Auto-detected from cwd if omitted."},
-                        "status": {"type": "string", "description": "Filter by single status."},
-                        "include_done": {"type": "boolean", "default": False, "description": "Include completed and cancelled TODOs."},
+                        "status": {"type": "string", "enum": ["active", "done", "cancelled", "all"], "default": "active", "description": "Filter by status."},
                     },
+                },
+            ),
+            Tool(
+                name="memory_epic_update",
+                description=EPIC_UPDATE_DESCRIPTION,
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "epic_id": {"type": "integer", "description": "Epic ID."},
+                        "status": {"type": "string", "enum": ["active", "done", "cancelled"], "description": "New status."},
+                        "title": {"type": "string", "description": "Updated title."},
+                        "description": {"type": "string", "description": "Full Markdown checklist (replaces existing)."},
+                        "ticket": {"type": "string", "description": "Updated ticket reference."},
+                    },
+                    "required": ["epic_id"],
                 },
             ),
             Tool(
@@ -491,12 +555,16 @@ def create_mcp_server(service: MemoryService) -> Server:
                 result = handle_memory_context(service, **arguments)
             elif name == "memory_details":
                 result = handle_memory_details(service, **arguments)
-            elif name == "memory_todo_add":
-                result = handle_memory_todo_add(service, **arguments)
-            elif name == "memory_todo_update":
-                result = handle_memory_todo_update(service, **arguments)
-            elif name == "memory_todo_list":
-                result = handle_memory_todo_list(service, **arguments)
+            elif name == "memory_epic_add":
+                result = handle_memory_epic_add(service, **arguments)
+            elif name == "memory_epic_get":
+                result = handle_memory_epic_get(service, **arguments)
+            elif name == "memory_epic_find":
+                result = handle_memory_epic_find(service, **arguments)
+            elif name == "memory_epic_list":
+                result = handle_memory_epic_list(service, **arguments)
+            elif name == "memory_epic_update":
+                result = handle_memory_epic_update(service, **arguments)
             elif name == "memory_project_register":
                 result = handle_memory_project_register(service, **arguments)
             elif name == "memory_project_list":

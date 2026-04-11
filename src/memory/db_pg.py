@@ -227,26 +227,41 @@ class MemoryDBPostgres:
             )
         """)
 
-        # TODOs table
+        # Epics table (replaces todos)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS todos (
-                id              BIGSERIAL PRIMARY KEY,
-                user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                project         VARCHAR(255) NOT NULL,
-                title           TEXT NOT NULL,
-                description     TEXT,
-                status          VARCHAR(20) DEFAULT 'pending',
-                priority        INTEGER DEFAULT 0,
-                source_memory_id VARCHAR(36),
-                created_at      TIMESTAMPTZ DEFAULT NOW(),
-                updated_at      TIMESTAMPTZ DEFAULT NOW(),
-                completed_at    TIMESTAMPTZ
+            CREATE TABLE IF NOT EXISTS epics (
+                id          BIGSERIAL PRIMARY KEY,
+                user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                project     VARCHAR(255) NOT NULL,
+                ticket      VARCHAR(255),
+                title       TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                status      VARCHAR(20) DEFAULT 'active',
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                updated_at  TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(user_id, project, ticket)
             )
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_todos_user_project
-            ON todos (user_id, project, status)
+            CREATE INDEX IF NOT EXISTS idx_epics_user_project
+            ON epics (user_id, project, status)
         """)
+
+        # Migration: add epic_id to memories if missing
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='memories' AND column_name='epic_id'
+                ) THEN
+                    ALTER TABLE memories ADD COLUMN epic_id BIGINT REFERENCES epics(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+        """)
+
+        # Migration: drop old todos table if exists
+        cursor.execute("DROP TABLE IF EXISTS todos")
 
         self.conn.commit()
 
@@ -351,14 +366,14 @@ class MemoryDBPostgres:
             cursor.execute("""
                 INSERT INTO memories (
                     user_id, memory_id, title, what, why, impact, tags, category, project,
-                    source, agent, related_files, file_path, section_anchor, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    source, agent, related_files, file_path, section_anchor, created_at, updated_at, epic_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
             """, (
                 self.user_id, mem.id, mem.title, mem.what, mem.why, mem.impact,
                 mem.tags, mem.category, mem.project, mem.source, mem.agent,
                 mem.related_files, mem.file_path, mem.section_anchor,
-                mem.created_at, mem.updated_at
+                mem.created_at, mem.updated_at, getattr(mem, 'epic_id', None)
             ))
 
             rowid = cursor.fetchone()[0]
@@ -991,26 +1006,29 @@ class MemoryDBPostgres:
 
     # ── TODO methods ──
 
-    def add_todo(
+    # ------------------------------------------------------------------
+    # Epic methods
+    # ------------------------------------------------------------------
+
+    def add_epic(
         self,
         project: str,
         title: str,
-        description: str | None = None,
-        priority: int = 0,
-        source_memory_id: str | None = None,
+        ticket: str | None = None,
+        description: str = "",
     ) -> dict:
-        """Add a TODO item."""
+        """Create an epic."""
         if not self.user_id:
-            raise ValueError("user_id required for add_todo")
+            raise ValueError("user_id required for add_epic")
         cursor = self._safe_cursor(dict_cursor=True)
         try:
             cursor.execute(
                 """
-                INSERT INTO todos (user_id, project, title, description, priority, source_memory_id)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                RETURNING id, project, title, description, status, priority, source_memory_id, created_at, updated_at
+                INSERT INTO epics (user_id, project, ticket, title, description)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id, project, ticket, title, description, status, created_at, updated_at
                 """,
-                (self.user_id, project, title, description, priority, source_memory_id),
+                (self.user_id, project, ticket, title, description),
             )
             row = cursor.fetchone()
             self.conn.commit()
@@ -1019,15 +1037,108 @@ class MemoryDBPostgres:
             self.conn.rollback()
             raise
 
-    def update_todo(
+    def get_epic(self, epic_id: int) -> dict | None:
+        """Get an epic by ID."""
+        if not self.user_id:
+            return None
+        cursor = self._safe_cursor(dict_cursor=True)
+        try:
+            cursor.execute(
+                """
+                SELECT id, project, ticket, title, description, status, created_at, updated_at
+                FROM epics
+                WHERE user_id = %s AND id = %s
+                """,
+                (self.user_id, epic_id),
+            )
+            row = cursor.fetchone()
+            self.conn.commit()
+            if row:
+                return _normalize_row(row)
+            return None
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def find_epic(self, ticket: str, project: str | None = None) -> dict | None:
+        """Find an epic by ticket (and optionally project)."""
+        if not self.user_id:
+            return None
+        cursor = self._safe_cursor(dict_cursor=True)
+        try:
+            if project:
+                cursor.execute(
+                    """
+                    SELECT id, project, ticket, title, description, status, created_at, updated_at
+                    FROM epics
+                    WHERE user_id = %s AND ticket = %s AND project = %s
+                    """,
+                    (self.user_id, ticket, project),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, project, ticket, title, description, status, created_at, updated_at
+                    FROM epics
+                    WHERE user_id = %s AND ticket = %s
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (self.user_id, ticket),
+                )
+            row = cursor.fetchone()
+            self.conn.commit()
+            if row:
+                return _normalize_row(row)
+            return None
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def list_epics(
         self,
-        todo_id: int,
+        project: str | None = None,
+        status: str | None = "active",
+    ) -> list[dict]:
+        """List epics, optionally filtered by project and/or status."""
+        if not self.user_id:
+            return []
+        cursor = self._safe_cursor(dict_cursor=True)
+        try:
+            conditions = ["user_id = %s"]
+            params: list = [self.user_id]
+            if project:
+                conditions.append("project = %s")
+                params.append(project)
+            if status and status != "all":
+                conditions.append("status = %s")
+                params.append(status)
+
+            cursor.execute(
+                f"""
+                SELECT id, project, ticket, title, description, status, created_at, updated_at
+                FROM epics
+                WHERE {' AND '.join(conditions)}
+                ORDER BY updated_at DESC
+                """,
+                params,
+            )
+            results = [_normalize_row(row) for row in cursor.fetchall()]
+            self.conn.commit()
+            return results
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def update_epic(
+        self,
+        epic_id: int,
         status: str | None = None,
         title: str | None = None,
         description: str | None = None,
-        priority: int | None = None,
+        ticket: str | None = None,
     ) -> dict | None:
-        """Update a TODO item. Returns updated row or None if not found."""
+        """Update an epic. Returns updated row or None if not found."""
         if not self.user_id:
             return None
         cursor = self._safe_cursor(dict_cursor=True)
@@ -1040,77 +1151,21 @@ class MemoryDBPostgres:
             if status is not None:
                 sets.append("status = %s")
                 params.append(status)
-                if status == "done":
-                    sets.append("completed_at = %s")
-                    params.append(datetime.now(timezone.utc).isoformat())
             if title is not None:
                 sets.append("title = %s")
                 params.append(title)
             if description is not None:
                 sets.append("description = %s")
                 params.append(description)
-            if priority is not None:
-                sets.append("priority = %s")
-                params.append(priority)
+            if ticket is not None:
+                sets.append("ticket = %s")
+                params.append(ticket)
 
-            params.extend([self.user_id, todo_id])
+            params.extend([self.user_id, epic_id])
             cursor.execute(
-                f"UPDATE todos SET {', '.join(sets)} WHERE user_id = %s AND id = %s "
-                "RETURNING id, project, title, description, status, priority, source_memory_id, created_at, updated_at, completed_at",
+                f"UPDATE epics SET {', '.join(sets)} WHERE user_id = %s AND id = %s "
+                "RETURNING id, project, ticket, title, description, status, created_at, updated_at",
                 params,
-            )
-            row = cursor.fetchone()
-            self.conn.commit()
-            if row:
-                return _normalize_row(row)
-            return None
-        except Exception:
-            self.conn.rollback()
-            raise
-
-    def list_todos(
-        self,
-        project: str,
-        statuses: list[str] | None = None,
-    ) -> list[dict]:
-        """List TODOs for a project filtered by status."""
-        if not self.user_id:
-            return []
-        if statuses is None:
-            statuses = ["pending", "in_progress"]
-        cursor = self._safe_cursor(dict_cursor=True)
-        try:
-            cursor.execute(
-                """
-                SELECT id, project, title, description, status, priority,
-                       source_memory_id, created_at, updated_at, completed_at
-                FROM todos
-                WHERE user_id = %s AND project = %s AND status = ANY(%s)
-                ORDER BY priority DESC, created_at ASC
-                """,
-                (self.user_id, project, statuses),
-            )
-            results = [_normalize_row(row) for row in cursor.fetchall()]
-            self.conn.commit()
-            return results
-        except Exception:
-            self.conn.rollback()
-            raise
-
-    def get_todo(self, todo_id: int) -> dict | None:
-        """Get a single TODO by ID."""
-        if not self.user_id:
-            return None
-        cursor = self._safe_cursor(dict_cursor=True)
-        try:
-            cursor.execute(
-                """
-                SELECT id, project, title, description, status, priority,
-                       source_memory_id, created_at, updated_at, completed_at
-                FROM todos
-                WHERE user_id = %s AND id = %s
-                """,
-                (self.user_id, todo_id),
             )
             row = cursor.fetchone()
             self.conn.commit()

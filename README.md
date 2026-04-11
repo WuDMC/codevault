@@ -70,6 +70,18 @@ cd ~/my-project
 memory install claude-code --url https://your-server.com --token YOUR_TOKEN
 ```
 
+#### Three layers of work tracking
+
+The installed skill teaches the agent to use **three distinct layers**, each for a different scope:
+
+| Layer | Tool | Scope | Lifetime | Use for |
+|-------|------|-------|----------|---------|
+| **1. Ephemeral** | `TaskCreate` / `TaskUpdate` | Current conversation only | Dies with the session | "Right now I'm doing X, then Y, then Z" — multi-step progress within one response |
+| **2. Short-term** | `memory_todo_add` / `memory_todo_list` | Project, persists across sessions | Until done or cancelled | "Later we should refactor X", deferred work, backlog items |
+| **3. Long-term** | `memory_save` / `memory_search` | Project, indexed with embeddings | Forever | Decisions, bug root causes, patterns, learnings |
+
+The skill includes a decision tree, examples for every layer, and rules for subagents and multi-conversation collisions. The session-stop hook enforces this: if you do meaningful work without calling either `memory_save` *or* `memory_todo_add`, it blocks the stop and asks you to file your work into the right layer.
+
 #### What `memory install` creates
 
 | File | Purpose |

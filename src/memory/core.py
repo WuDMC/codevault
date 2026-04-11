@@ -593,99 +593,63 @@ class MemoryService:
             raise NotImplementedError("Project registration requires PostgreSQL backend")
         return self.db.auto_register_projects()
 
-    # ── TODO methods ──
+    # ── Epic methods ──
 
-    def add_todo(
+    def add_epic(
         self,
         project: str,
         title: str,
-        description: str | None = None,
-        priority: int = 0,
-        source_memory_id: str | None = None,
+        ticket: str | None = None,
+        description: str = "",
     ) -> dict:
-        """Add a TODO item to a project."""
-        if not hasattr(self.db, "add_todo"):
-            raise NotImplementedError("TODOs require PostgreSQL backend")
-        return self.db.add_todo(project, title, description, priority, source_memory_id)
+        """Create an epic."""
+        if not hasattr(self.db, "add_epic"):
+            raise NotImplementedError("Epics require PostgreSQL backend")
+        return self.db.add_epic(project, title, ticket, description)
 
-    def update_todo(
+    def get_epic(self, epic_id: int) -> dict | None:
+        """Get an epic by ID."""
+        if not hasattr(self.db, "get_epic"):
+            raise NotImplementedError("Epics require PostgreSQL backend")
+        return self.db.get_epic(epic_id)
+
+    def find_epic(self, ticket: str, project: str | None = None) -> dict | None:
+        """Find an epic by ticket."""
+        if not hasattr(self.db, "find_epic"):
+            raise NotImplementedError("Epics require PostgreSQL backend")
+        return self.db.find_epic(ticket, project)
+
+    def list_epics(
         self,
-        todo_id: int,
+        project: str | None = None,
+        status: str | None = "active",
+    ) -> list[dict]:
+        """List epics for a project."""
+        if not hasattr(self.db, "list_epics"):
+            return []
+        return self.db.list_epics(project, status)
+
+    def update_epic(
+        self,
+        epic_id: int,
         status: str | None = None,
         title: str | None = None,
         description: str | None = None,
-        priority: int | None = None,
+        ticket: str | None = None,
     ) -> dict | None:
-        """Update a TODO item."""
-        if not hasattr(self.db, "update_todo"):
-            raise NotImplementedError("TODOs require PostgreSQL backend")
-        return self.db.update_todo(todo_id, status, title, description, priority)
+        """Update an epic."""
+        if not hasattr(self.db, "update_epic"):
+            raise NotImplementedError("Epics require PostgreSQL backend")
+        return self.db.update_epic(epic_id, status, title, description, ticket)
 
-    def list_todos(
-        self,
-        project: str,
-        statuses: list[str] | None = None,
-    ) -> list[dict]:
-        """List TODOs for a project."""
-        if not hasattr(self.db, "list_todos"):
-            return []
-        return self.db.list_todos(project, statuses)
-
-    def generate_todo_suggestions(
-        self,
-        raw: RawMemoryInput,
-        project: str,
-    ) -> dict:
-        """Generate TODO suggestions based on saved memory content.
-
-        Heuristic v1: scan details for follow-up keywords, match bugs to existing TODOs.
-        """
-        import re
-
-        suggestions: dict = {"add": [], "mark_done": []}
-
-        details = (raw.details or "").strip()
-        what = raw.what or ""
-        title = raw.title or ""
-
-        # Scan for follow-up / TODO keywords in details
-        if details:
-            follow_up_patterns = [
-                r"(?i)follow[- ]?up[:\s]*(.*?)(?:\n|$)",
-                r"(?i)TODO[:\s]*(.*?)(?:\n|$)",
-                r"(?i)next\s+step[s]?[:\s]*(.*?)(?:\n|$)",
-            ]
-            for pattern in follow_up_patterns:
-                for match in re.finditer(pattern, details):
-                    text = match.group(1).strip()
-                    if text and len(text) > 5:
-                        suggestions["add"].append({
-                            "title": text[:120],
-                            "reason": f"Found in details of '{title}'",
-                        })
-
-        # For bug fixes, check if any existing TODOs match
-        if raw.category == "bug" and hasattr(self.db, "list_todos"):
-            try:
-                existing_todos = self.db.list_todos(project, statuses=["pending", "in_progress"])
-                title_lower = title.lower()
-                what_lower = what.lower()
-                for todo in existing_todos:
-                    todo_title_lower = todo["title"].lower()
-                    # Simple word overlap check
-                    todo_words = set(todo_title_lower.split())
-                    memory_words = set(title_lower.split()) | set(what_lower.split())
-                    overlap = todo_words & memory_words - {"the", "a", "an", "is", "in", "to", "for", "of"}
-                    if len(overlap) >= 2:
-                        suggestions["mark_done"].append({
-                            "todo_id": todo["id"],
-                            "title": todo["title"],
-                            "reason": f"Bug fix '{title}' may resolve this TODO",
-                        })
-            except Exception:
-                pass
-
-        return suggestions
+    def ensure_backlog_epic(self, project: str) -> dict:
+        """Ensure a Backlog epic exists for a project. Returns it."""
+        if not hasattr(self.db, "find_epic"):
+            raise NotImplementedError("Epics require PostgreSQL backend")
+        existing = self.db.find_epic("_backlog", project)
+        if existing:
+            return existing
+        return self.db.add_epic(project, "Backlog", ticket="_backlog", description="")
 
     def close(self) -> None:
         """Close database connection and clean up resources."""

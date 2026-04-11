@@ -151,6 +151,7 @@ def config_init(force):
 @click.option("--source", default=None, help="Source of the memory (client/IDE)")
 @click.option("--agent", default=None, help="Agent role (architect, developer, reviewer, etc.)")
 @click.option("--project", default=None, help="Project name")
+@click.option("--epic-id", default=None, type=int, help="Epic ID to link this memory to")
 def save(
     title,
     what,
@@ -165,6 +166,7 @@ def save(
     source,
     agent,
     project,
+    epic_id,
 ):
     """Save a memory to the current session."""
     project = project or os.path.basename(os.getcwd())
@@ -196,6 +198,7 @@ def save(
         details=resolved_details,
         source=source,
         agent=agent,
+        epic_id=epic_id,
     )
 
     svc = MemoryService()
@@ -695,99 +698,121 @@ def project_auto_register():
 
 
 @main.group()
-def todo():
-    """Manage TODO items (PostgreSQL backend only)."""
+def epic():
+    """Manage epics (PostgreSQL backend only)."""
     pass
 
 
-@todo.command("add")
+@epic.command("add")
 @click.argument("title")
-@click.option("--description", default=None, help="Detailed description")
+@click.option("--ticket", default=None, help="Ticket reference (e.g. AUTH-123)")
 @click.option("--project", default=None, help="Project name (default: current directory)")
-@click.option("--priority", type=click.Choice(["0", "1", "2"]), default="0", help="0=normal, 1=high, 2=critical")
-def todo_add(title, description, project, priority):
-    """Add a TODO item to a project."""
+@click.option("--description", default="", help="Markdown checklist (e.g. '- [ ] step 1')")
+def epic_add(title, ticket, project, description):
+    """Create a new epic."""
     project = project or os.path.basename(os.getcwd())
     svc = MemoryService()
     try:
-        result = svc.add_todo(project, title, description, int(priority))
-        click.echo(f"TODO added: #{result['id']} {result['title']}")
+        result = svc.add_epic(project, title, ticket, description)
+        ticket_str = f" [{result.get('ticket')}]" if result.get("ticket") else ""
+        click.echo(f"Epic created: #{result['id']} {result['title']}{ticket_str}")
     except NotImplementedError:
-        click.echo("Error: TODOs require PostgreSQL backend", err=True)
+        click.echo("Error: Epics require PostgreSQL backend", err=True)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
     finally:
         svc.close()
 
 
-@todo.command("list")
+@epic.command("list")
 @click.option("--project", default=None, help="Project name (default: current directory)")
-@click.option("--all", "include_done", is_flag=True, default=False, help="Include done/cancelled items")
-def todo_list_cmd(project, include_done):
-    """List TODO items for a project."""
+@click.option("--status", type=click.Choice(["active", "done", "cancelled", "all"]), default="active")
+def epic_list_cmd(project, status):
+    """List epics for a project."""
     project = project or os.path.basename(os.getcwd())
     svc = MemoryService()
     try:
-        statuses = ["pending", "in_progress", "done", "cancelled"] if include_done else None
-        todos = svc.list_todos(project, statuses)
-        if not todos:
-            click.echo(f"No TODOs for project '{project}'.")
+        epics = svc.list_epics(project, status)
+        if not epics:
+            click.echo(f"No epics for project '{project}' (status={status}).")
         else:
-            click.echo(f"TODOs for '{project}' ({len(todos)}):")
-            for t in todos:
-                status_icon = {"pending": " ", "in_progress": ">", "done": "x", "cancelled": "-"}.get(t["status"], "?")
-                priority_str = {1: " [HIGH]", 2: " [CRITICAL]"}.get(t.get("priority", 0), "")
-                click.echo(f"  [{status_icon}] #{t['id']} {t['title']}{priority_str}")
-                if t.get("description"):
-                    click.echo(f"      {t['description'][:80]}")
+            click.echo(f"Epics for '{project}' ({len(epics)}):")
+            for e in epics:
+                desc = e.get("description", "")
+                total = desc.count("- [")
+                done = desc.count("- [x]")
+                progress = f" [{done}/{total}]" if total > 0 else ""
+                ticket_str = f" ({e['ticket']})" if e.get("ticket") and e["ticket"] != "_backlog" else ""
+                click.echo(f"  #{e['id']} {e['title']}{ticket_str}{progress} [{e['status']}]")
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
     finally:
         svc.close()
 
 
-@todo.command("update")
-@click.argument("todo_id", type=int)
-@click.option("--status", type=click.Choice(["pending", "in_progress", "done", "cancelled"]), default=None)
+@epic.command("get")
+@click.argument("epic_id", type=int)
+def epic_get(epic_id):
+    """Show an epic with its checklist."""
+    svc = MemoryService()
+    try:
+        result = svc.get_epic(epic_id)
+        if not result:
+            click.echo(f"Epic #{epic_id} not found.", err=True)
+            return
+        click.echo(f"Epic #{result['id']}: {result['title']}")
+        if result.get("ticket"):
+            click.echo(f"Ticket: {result['ticket']}")
+        click.echo(f"Status: {result['status']}")
+        if result.get("description"):
+            click.echo(f"\nChecklist:\n{result['description']}")
+    except NotImplementedError:
+        click.echo("Error: Epics require PostgreSQL backend", err=True)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+    finally:
+        svc.close()
+
+
+@epic.command("update")
+@click.argument("epic_id", type=int)
+@click.option("--status", type=click.Choice(["active", "done", "cancelled"]), default=None)
 @click.option("--title", default=None)
-@click.option("--description", default=None)
-@click.option("--priority", type=click.Choice(["0", "1", "2"]), default=None)
-def todo_update(todo_id, status, title, description, priority):
-    """Update a TODO item."""
+@click.option("--description", default=None, help="Full Markdown checklist (replaces existing)")
+@click.option("--ticket", default=None)
+def epic_update(epic_id, status, title, description, ticket):
+    """Update an epic."""
     svc = MemoryService()
     try:
-        result = svc.update_todo(
-            todo_id,
-            status=status,
-            title=title,
-            description=description,
-            priority=int(priority) if priority else None,
-        )
+        result = svc.update_epic(epic_id, status=status, title=title, description=description, ticket=ticket)
         if result:
-            click.echo(f"TODO #{todo_id} updated: {result['status']}")
+            click.echo(f"Epic #{epic_id} updated: {result['status']}")
         else:
-            click.echo(f"TODO #{todo_id} not found.", err=True)
+            click.echo(f"Epic #{epic_id} not found.", err=True)
     except NotImplementedError:
-        click.echo("Error: TODOs require PostgreSQL backend", err=True)
+        click.echo("Error: Epics require PostgreSQL backend", err=True)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
     finally:
         svc.close()
 
 
-@todo.command("done")
-@click.argument("todo_id", type=int)
-def todo_done(todo_id):
-    """Mark a TODO as done."""
+@epic.command("find")
+@click.option("--ticket", required=True, help="Ticket name to search for")
+@click.option("--project", default=None, help="Filter to project")
+def epic_find(ticket, project):
+    """Find an epic by ticket name."""
     svc = MemoryService()
     try:
-        result = svc.update_todo(todo_id, status="done")
-        if result:
-            click.echo(f"TODO #{todo_id} marked as done.")
-        else:
-            click.echo(f"TODO #{todo_id} not found.", err=True)
+        result = svc.find_epic(ticket, project)
+        if not result:
+            click.echo(f"No epic found for ticket '{ticket}'.")
+            return
+        click.echo(f"Epic #{result['id']}: {result['title']} [{result['status']}]")
+        if result.get("description"):
+            click.echo(f"\nChecklist:\n{result['description']}")
     except NotImplementedError:
-        click.echo("Error: TODOs require PostgreSQL backend", err=True)
+        click.echo("Error: Epics require PostgreSQL backend", err=True)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
     finally:
