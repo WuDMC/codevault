@@ -355,6 +355,7 @@ class MemoryService:
         source: Optional[str] = None,
         agent: Optional[str] = None,
         use_vectors: bool = True,
+        epic_id: Optional[int] = None,
     ) -> list[dict]:
         """Search memories using hybrid FTS + vector search.
 
@@ -365,6 +366,8 @@ class MemoryService:
             limit: Maximum number of results to return (default: 5)
             project: Optional project filter
             source: Optional source filter
+            agent: Optional agent role filter
+            epic_id: Optional epic ID filter
 
         Returns:
             List of search results with scores and metadata
@@ -379,6 +382,7 @@ class MemoryService:
                 project=project,
                 source=source,
                 agent=agent,
+                epic_id=epic_id,
             )
 
         # Use tiered search: FTS first, embed only if sparse results
@@ -392,6 +396,7 @@ class MemoryService:
                     project=project,
                     source=source,
                     agent=agent,
+                    epic_id=epic_id,
                 )
             except DimensionMismatchError:
                 self._vectors_available = False
@@ -407,6 +412,7 @@ class MemoryService:
             project=project,
             source=source,
             agent=agent,
+            epic_id=epic_id,
         )
 
     def _ollama_warm(self) -> bool:

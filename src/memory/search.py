@@ -11,13 +11,13 @@ class MemoryDBLike(Protocol):
     def fts_search(
         self, query: str, limit: int = 10,
         project: Optional[str] = None, source: Optional[str] = None,
-        agent: Optional[str] = None,
+        agent: Optional[str] = None, epic_id: Optional[int] = None,
     ) -> list[dict]: ...
 
     def vector_search(
         self, query_embedding: list[float], limit: int = 10,
         project: Optional[str] = None, source: Optional[str] = None,
-        agent: Optional[str] = None,
+        agent: Optional[str] = None, epic_id: Optional[int] = None,
     ) -> list[dict]: ...
 
 
@@ -79,6 +79,7 @@ def tiered_search(
     project: Optional[str] = None,
     source: Optional[str] = None,
     agent: Optional[str] = None,
+    epic_id: Optional[int] = None,
 ) -> list[dict]:
     """FTS-first tiered search that only calls embed when FTS results are sparse.
 
@@ -94,11 +95,12 @@ def tiered_search(
         project: Optional project filter
         source: Optional source filter
         agent: Optional agent role filter
+        epic_id: Optional epic ID filter
 
     Returns:
         Search results sorted by score descending
     """
-    fts_results = db.fts_search(query, limit=limit * 2, project=project, source=source, agent=agent)
+    fts_results = db.fts_search(query, limit=limit * 2, project=project, source=source, agent=agent, epic_id=epic_id)
 
     # Normalize FTS scores to 0-1
     if fts_results:
@@ -118,7 +120,7 @@ def tiered_search(
     try:
         query_vec = embedding_provider.embed(query)
         vec_results = db.vector_search(
-            query_vec, limit=limit * 2, project=project, source=source, agent=agent
+            query_vec, limit=limit * 2, project=project, source=source, agent=agent, epic_id=epic_id
         )
         # FTS scores already normalized (max=1.0); merge_results re-normalizes
         # which is a no-op on 0-1 scores.
@@ -136,6 +138,7 @@ def hybrid_search(
     project: Optional[str] = None,
     source: Optional[str] = None,
     agent: Optional[str] = None,
+    epic_id: Optional[int] = None,
 ) -> list[dict]:
     """Run FTS5 and optionally vector search, merge results.
 
@@ -149,11 +152,12 @@ def hybrid_search(
         project: Optional project filter
         source: Optional source filter
         agent: Optional agent role filter
+        epic_id: Optional epic ID filter
 
     Returns:
         Merged and re-ranked search results
     """
-    fts_results = db.fts_search(query, limit=limit * 2, project=project, source=source, agent=agent)
+    fts_results = db.fts_search(query, limit=limit * 2, project=project, source=source, agent=agent, epic_id=epic_id)
 
     if embedding_provider is None:
         # FTS-only mode: normalize scores and return directly
@@ -165,6 +169,6 @@ def hybrid_search(
 
     query_vec = embedding_provider.embed(query)
     vec_results = db.vector_search(
-        query_vec, limit=limit * 2, project=project, source=source, agent=agent
+        query_vec, limit=limit * 2, project=project, source=source, agent=agent, epic_id=epic_id
     )
     return merge_results(fts_results, vec_results, limit=limit)

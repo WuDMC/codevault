@@ -69,6 +69,8 @@ PROJECT_REGISTER_DESCRIPTION = """Register a new project. Projects must be regis
 
 PROJECT_LIST_DESCRIPTION = """List all registered projects for the current user."""
 
+HEALTH_DESCRIPTION = """Check health of the memory server. Returns status of database connection, embedding provider configuration, and server version. Use this to verify the memory system is operational."""
+
 
 def _normalize_tags(tags_raw) -> list[str]:
     """Normalize tags from either JSON string (SQLite) or list (PG)."""
@@ -164,9 +166,10 @@ def handle_memory_search(
     project: Optional[str] = None,
     source: Optional[str] = None,
     agent: Optional[str] = None,
+    epic_id: Optional[int] = None,
 ) -> str:
     """Handle memory_search tool call. Returns JSON string."""
-    results = service.search(query, limit=limit, project=project, source=source, agent=agent)
+    results = service.search(query, limit=limit, project=project, source=source, agent=agent, epic_id=epic_id)
 
     clean = []
     for r in results:
@@ -362,6 +365,73 @@ def handle_memory_project_list(service: MemoryService) -> str:
     return json.dumps({"projects": projects})
 
 
+def handle_memory_health(service: MemoryService) -> str:
+    """Handle memory_health tool call. Returns JSON string with server health."""
+    import importlib.metadata
+
+    # Check DB connection
+    db_status = "connected"
+    try:
+        if hasattr(service, "db") and service.db is not None:
+            conn = getattr(service.db, "conn", None)
+            if conn is not None:
+                cur = conn.cursor()
+                cur.execute("SELECT 1")
+                cur.fetchone()
+                cur.close()
+            else:
+                # PG backend uses pool; try a simple query
+                pool = getattr(service.db, "pool", None)
+                if pool is not None:
+                    pg_conn = pool.getconn()
+                    try:
+                        cur = pg_conn.cursor()
+                        cur.execute("SELECT 1")
+                        cur.fetchone()
+                        cur.close()
+                    finally:
+                        pool.putconn(pg_conn)
+                else:
+                    db_status = "error"
+        else:
+            db_status = "error"
+    except Exception as e:
+        import sys
+        print(f"[HEALTH] DB check failed: {e}", file=sys.stderr)
+        db_status = "error"
+
+    # Check embedding configuration
+    embed_status = "not_configured"
+    try:
+        provider = service.config.embedding.provider
+        if provider:
+            if provider == "openai":
+                api_key = service.config.embedding.api_key or os.environ.get("OPENAI_API_KEY")
+                if not api_key:
+                    embed_status = "no_api_key"
+                else:
+                    embed_status = "configured"
+            else:
+                embed_status = "configured"
+    except Exception:
+        embed_status = "not_configured"
+
+    # Get version
+    try:
+        version = importlib.metadata.version("codevault")
+    except Exception:
+        version = "unknown"
+
+    status = "ok" if db_status == "connected" else "degraded"
+
+    return json.dumps({
+        "status": status,
+        "db": db_status,
+        "embeddings": embed_status,
+        "version": version,
+    })
+
+
 def create_mcp_server(service: MemoryService) -> Server:
     """Create and configure the MCP server with memory tools.
 
@@ -427,6 +497,7 @@ def create_mcp_server(service: MemoryService) -> Server:
                         "project": {"type": "string", "description": "Filter to project."},
                         "source": {"type": "string", "description": "Filter by client/IDE."},
                         "agent": {"type": "string", "description": "Filter by agent role."},
+                        "epic_id": {"type": "integer", "description": "Filter to memories linked to this epic ID."},
                     },
                     "required": ["query"],
                 },
@@ -539,6 +610,14 @@ def create_mcp_server(service: MemoryService) -> Server:
                     "properties": {},
                 },
             ),
+            Tool(
+                name="memory_health",
+                description=HEALTH_DESCRIPTION,
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -569,6 +648,8 @@ def create_mcp_server(service: MemoryService) -> Server:
                 result = handle_memory_project_register(service, **arguments)
             elif name == "memory_project_list":
                 result = handle_memory_project_list(service)
+            elif name == "memory_health":
+                result = handle_memory_health(service)
             else:
                 result = json.dumps({"error": f"Unknown tool: {name}"})
         except Exception as e:

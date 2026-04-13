@@ -609,6 +609,7 @@ class MemoryDBPostgres:
         project: Optional[str] = None,
         source: Optional[str] = None,
         agent: Optional[str] = None,
+        epic_id: Optional[int] = None,
     ) -> list[dict]:
         """Search memories using PostgreSQL full-text search.
 
@@ -618,6 +619,7 @@ class MemoryDBPostgres:
             project: Optional project filter
             source: Optional source filter
             agent: Optional agent role filter
+            epic_id: Optional epic ID filter
 
         Returns:
             List of memory dictionaries with scores
@@ -641,6 +643,10 @@ class MemoryDBPostgres:
             if agent:
                 where_clauses.append("m.agent = %s")
                 where_params.append(agent)
+
+            if epic_id is not None:
+                where_clauses.append("m.epic_id = %s")
+                where_params.append(epic_id)
 
             where_clause = " AND ".join(where_clauses)
             # Param order must match SQL %s order:
@@ -675,6 +681,7 @@ class MemoryDBPostgres:
         project: Optional[str] = None,
         source: Optional[str] = None,
         agent: Optional[str] = None,
+        epic_id: Optional[int] = None,
     ) -> list[dict]:
         """Search memories using vector similarity.
 
@@ -684,6 +691,7 @@ class MemoryDBPostgres:
             project: Optional project filter
             source: Optional source filter
             agent: Optional agent role filter
+            epic_id: Optional epic ID filter
 
         Returns:
             List of memory dictionaries with similarity scores
@@ -707,6 +715,10 @@ class MemoryDBPostgres:
             if agent:
                 where_clauses.append("m.agent = %s")
                 where_params.append(agent)
+
+            if epic_id is not None:
+                where_clauses.append("m.epic_id = %s")
+                where_params.append(epic_id)
 
             where_clause = " AND ".join(where_clauses)
             # Param order must match SQL %s order:

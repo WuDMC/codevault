@@ -927,6 +927,94 @@ def bundle_update(force, dry_run):
         click.echo(f"  Updated: {', '.join(result.files_updated)}")
 
 
+@main.command("health")
+@click.option("--url", default=None, help="MCP server URL (or CODEVAULT_URL env)")
+@click.option("--token", default=None, help="Bearer auth token (or CODEVAULT_TOKEN env)")
+def health(url, token):
+    """Check health of memory system (local or remote)."""
+    from memory.installer import resolve_connection_params
+
+    # Resolve URL and token from args, env, or existing config
+    if not url or not token:
+        auto_url, auto_token = resolve_connection_params(os.getcwd())
+        url = url or auto_url
+        token = token or auto_token
+
+    if url:
+        # Remote mode: call /health endpoint via httpx
+        import httpx
+
+        health_url = url.rstrip("/") + "/health"
+        try:
+            resp = httpx.get(health_url, timeout=10)
+            data = resp.json()
+        except httpx.ConnectError:
+            click.echo(f"FAIL  Cannot connect to {health_url}")
+            raise SystemExit(1)
+        except Exception as e:
+            click.echo(f"FAIL  Request failed: {e}")
+            raise SystemExit(1)
+
+        status_str = data.get("status", "unknown")
+        click.echo(f"{'OK' if status_str == 'ok' else 'WARN'}  status: {status_str}")
+        click.echo(f"      db: {data.get('db', 'unknown')}")
+        click.echo(f"      embeddings: {data.get('embeddings', 'unknown')}")
+        click.echo(f"      version: {data.get('version', 'unknown')}")
+        click.echo(f"      uptime: {data.get('uptime_seconds', '?')}s")
+        click.echo(f"      server: {url}")
+        if status_str != "ok":
+            raise SystemExit(1)
+    else:
+        # Local mode: check DB connection and embedding config directly
+        home = get_memory_home()
+        config = load_config(os.path.join(home, "config.yaml"))
+
+        # Check DB
+        db_status = "connected"
+        if config.storage.backend == "postgresql":
+            conn = None
+            try:
+                import psycopg2
+                conn = psycopg2.connect(config.storage.url)
+                cur = conn.cursor()
+                cur.execute("SELECT 1")
+                cur.close()
+            except Exception as e:
+                click.echo(f"[HEALTH] DB check failed: {e}")
+                db_status = "error"
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        else:
+            db_status = "connected (sqlite)"
+
+        # Check embeddings config
+        embed_status = "configured"
+        if not config.embedding.provider:
+            embed_status = "not_configured"
+        elif config.embedding.provider == "openai" and not config.embedding.api_key:
+            if not os.environ.get("OPENAI_API_KEY"):
+                embed_status = "no_api_key"
+
+        # Version from package metadata
+        try:
+            from importlib.metadata import version as _pkg_version
+            _version = _pkg_version("codevault")
+        except Exception:
+            _version = "unknown"
+
+        overall = "ok" if db_status.startswith("connected") else "degraded"
+        click.echo(f"{'OK' if overall == 'ok' else 'WARN'}  status: {overall}")
+        click.echo(f"      db: {db_status} ({config.storage.backend})")
+        click.echo(f"      embeddings: {embed_status} ({config.embedding.provider}/{config.embedding.model})")
+        click.echo(f"      version: {_version}")
+        if overall != "ok":
+            raise SystemExit(1)
+
+
 @main.command()
 @click.option("--transport", type=click.Choice(["stdio", "sse", "http"]), default="stdio", help="Transport type")
 @click.option("--port", type=int, default=8420, help="Port for SSE/HTTP transport")
@@ -934,6 +1022,63 @@ def bundle_update(force, dry_run):
 def mcp(transport, port, host):
     """Start the EchoVault MCP server."""
     import asyncio
+    import time as _time
+
+    _server_start_time = _time.monotonic()
+
+    def _build_health_response(config) -> tuple[dict, int]:
+        """Build health check JSON and HTTP status code."""
+        import time as _t
+        uptime = int(_t.monotonic() - _server_start_time)
+        db_status = "connected"
+        http_status = 200
+        if config.storage.backend == "postgresql":
+            conn = None
+            try:
+                import psycopg2
+                conn = psycopg2.connect(config.storage.url)
+                cur = conn.cursor()
+                cur.execute("SELECT 1")
+                cur.close()
+            except Exception as e:
+                click.echo(f"[HEALTH] DB check failed: {e}")
+                db_status = "error"
+                http_status = 503
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        else:
+            # SQLite — always ok if we got this far
+            db_status = "connected"
+
+        # W1: Check embedding provider configuration
+        embed_status = "configured"
+        if not config.embedding.provider:
+            embed_status = "not_configured"
+        elif config.embedding.provider == "openai" and not config.embedding.api_key:
+            # Check env var fallback
+            import os as _os
+            if not _os.environ.get("OPENAI_API_KEY"):
+                embed_status = "no_api_key"
+
+        # W4: Version from package metadata instead of hardcoded
+        try:
+            from importlib.metadata import version as _pkg_version
+            _version = _pkg_version("codevault")
+        except Exception:
+            _version = "unknown"
+
+        body = {
+            "status": "ok" if http_status == 200 else "degraded",
+            "db": db_status,
+            "embeddings": embed_status,
+            "version": _version,
+            "uptime_seconds": uptime,
+        }
+        return body, http_status
 
     if transport == "stdio":
         from memory.mcp_server import run_server
@@ -1060,6 +1205,12 @@ def mcp(transport, port, host):
                     session["service"].close()
                 sessions.clear()
 
+        # --- Health endpoint (no auth required) ---
+        async def handle_health(request: Request):
+            """GET /health — public health check for monitoring."""
+            body, status = _build_health_response(config)
+            return JSONResponse(body, status_code=status)
+
         # --- Bundle REST endpoints ---
         async def handle_bundles_list(request: Request):
             """GET /bundles — list available skill bundles."""
@@ -1083,6 +1234,7 @@ def mcp(transport, port, host):
 
         app = Starlette(
             routes=[
+                Route("/health", endpoint=handle_health),
                 Route("/bundles", endpoint=handle_bundles_list),
                 Route("/bundles/{agent_type}", endpoint=handle_bundle_get),
                 Mount("", app=handle_mcp),
@@ -1147,6 +1299,12 @@ def mcp(transport, port, host):
 
             return Response()
 
+        # --- Health endpoint (SSE transport, no auth required) ---
+        async def handle_health_sse(request: Request):
+            """GET /health — public health check for monitoring."""
+            body, status = _build_health_response(config)
+            return JSONResponse(body, status_code=status)
+
         # --- Bundle REST endpoints (SSE transport) ---
         async def handle_bundles_list_sse(request: Request):
             auth_header = request.headers.get("Authorization", "")
@@ -1177,6 +1335,7 @@ def mcp(transport, port, host):
             return JSONResponse(bundle)
 
         app = Starlette(routes=[
+            Route("/health", endpoint=handle_health_sse),
             Route("/bundles", endpoint=handle_bundles_list_sse),
             Route("/bundles/{agent_type}", endpoint=handle_bundle_get_sse),
             Route("/sse", endpoint=handle_sse),

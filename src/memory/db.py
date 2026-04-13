@@ -430,6 +430,7 @@ class MemoryDB:
         project: Optional[str] = None,
         source: Optional[str] = None,
         agent: Optional[str] = None,
+        epic_id: Optional[int] = None,
     ) -> list[dict]:
         """Search memories using FTS5 full-text search.
 
@@ -490,6 +491,7 @@ class MemoryDB:
         project: Optional[str] = None,
         source: Optional[str] = None,
         agent: Optional[str] = None,
+        epic_id: Optional[int] = None,
     ) -> list[dict]:
         """Search memories using vector similarity.
 
