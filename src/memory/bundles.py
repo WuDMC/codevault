@@ -12,7 +12,7 @@ import json
 # Bundle version — increment when any content changes
 # ---------------------------------------------------------------------------
 
-BUNDLE_VERSION = 4
+BUNDLE_VERSION = 5
 
 # ---------------------------------------------------------------------------
 # Canonical SKILL.md (MCP-based, universal)
@@ -113,7 +113,8 @@ memory_epic_add(
   project="{{project_name}}",
   title="Refactor auth module to JWT",
   ticket="AUTH-123",
-  description="- [ ] Audit session usage\\n- [ ] Design JWT schema\\n- [ ] Implement token issuer\\n- [ ] Update tests"
+  description="- [ ] Audit session usage\\n- [ ] Design JWT schema\\n- [ ] Implement token issuer\\n- [ ] Update tests",
+  notes=""
 )
 ```
 Create when: there's a ticket, OR work has 3+ steps, OR it will span sessions.
@@ -135,6 +136,22 @@ memory_epic_update(
   description="- [x] Audit session usage\\n- [x] Design JWT schema\\n- [ ] Implement token issuer\\n- [ ] Update tests"
 )
 ```
+
+### Adding notes (KEEP CHECKLIST CLEAN)
+
+Use `notes` for findings, comments, and discussion. **Do NOT put notes inline in the checklist.**
+
+```
+memory_epic_update(
+  epic_id=42,
+  notes="Reviewer W1: auth middleware has SQL injection risk in session lookup.\\nTester: confirmed, added regression test.\\nDeveloper: fixed in commit abc123."
+)
+```
+
+**Checklist** = what needs to be done (steps with `- [ ]` / `- [x]`).
+**Notes** = what was discovered, discussed, decided (freeform text, append-style).
+
+When adding to notes, read the current notes first (`memory_epic_get`) and append your text — do not overwrite previous notes.
 
 ### Closing an epic
 
