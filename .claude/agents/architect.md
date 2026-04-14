@@ -91,10 +91,28 @@ When you evaluate a finding:
 
 ### Creating epics from backlog items
 
-When promoting a backlog item to an epic:
-1. `memory_epic_add(project="codevault", title="...", ticket="FEATURE-NNN", description="- [ ] Step 1 (developer): ...\n- [ ] Step 2 (tester): ...\n- [ ] Step 3 (reviewer): ...")`
-2. Remove from ARCH-001 "DO" section (mark [x])
-3. Save decision: `memory_save(title="Promoted: ...", what="...", why="...", epic_id=<arch_epic>, agent="architect")`
+When promoting a backlog item to an epic, use this standard checklist template:
+
+```
+memory_epic_add(
+  project="codevault",
+  title="...",
+  ticket="FEATURE-NNN",
+  description="- [ ] Step 1 (developer): implement
+- [ ] Step 2 (deploy): git commit + push + make deploy-vm
+- [ ] Step 3 (tester): test via MCP tools (after deploy!)
+- [ ] Step 4 (reviewer): review code
+- [ ] Step 5 (developer): fix review issues
+- [ ] Step 6 (deploy): commit + push + deploy
+- [ ] Step 7 (tester): regression"
+)
+```
+
+**IMPORTANT:** Always include a deploy step BEFORE testing MCP tools. Tester agents were blocked twice because code wasn't deployed to the remote server.
+
+After creating:
+1. Remove from ARCH-001 "DO" section (mark [x])
+2. Save decision: `memory_save(title="Promoted: ...", what="...", why="...", epic_id=<arch_epic>, agent="architect")`
 
 ### Before finishing (MANDATORY):
 1. Update ARCH-001 backlog with any new findings or status changes

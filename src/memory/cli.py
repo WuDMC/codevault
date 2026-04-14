@@ -947,10 +947,17 @@ def health(url, token):
         health_url = url.rstrip("/") + "/health"
         try:
             resp = httpx.get(health_url, timeout=10)
+            if resp.status_code != 200:
+                click.echo(f"WARN  Server returned HTTP {resp.status_code}")
+                if resp.status_code == 404:
+                    click.echo("      /health endpoint not found — server may need redeployment")
+                raise SystemExit(1)
             data = resp.json()
         except httpx.ConnectError:
             click.echo(f"FAIL  Cannot connect to {health_url}")
             raise SystemExit(1)
+        except SystemExit:
+            raise
         except Exception as e:
             click.echo(f"FAIL  Request failed: {e}")
             raise SystemExit(1)
@@ -965,50 +972,27 @@ def health(url, token):
         if status_str != "ok":
             raise SystemExit(1)
     else:
-        # Local mode: check DB connection and embedding config directly
+        # Local mode: use shared health check
+        from memory.health import check_health
+
         home = get_memory_home()
         config = load_config(os.path.join(home, "config.yaml"))
 
-        # Check DB
-        db_status = "connected"
-        if config.storage.backend == "postgresql":
-            conn = None
-            try:
-                import psycopg2
-                conn = psycopg2.connect(config.storage.url)
-                cur = conn.cursor()
-                cur.execute("SELECT 1")
-                cur.close()
-            except Exception as e:
-                click.echo(f"[HEALTH] DB check failed: {e}")
-                db_status = "error"
-            finally:
-                if conn is not None:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
+        data = check_health(config)
+
+        overall = data["status"]
+        db_status = data["db"]
+        embed_status = data["embeddings"]
+        _version = data["version"]
+
+        # Annotate db status with backend type for local display
+        if db_status == "connected" and config.storage.backend == "sqlite":
+            db_display = "connected (sqlite)"
         else:
-            db_status = "connected (sqlite)"
+            db_display = f"{db_status} ({config.storage.backend})"
 
-        # Check embeddings config
-        embed_status = "configured"
-        if not config.embedding.provider:
-            embed_status = "not_configured"
-        elif config.embedding.provider == "openai" and not config.embedding.api_key:
-            if not os.environ.get("OPENAI_API_KEY"):
-                embed_status = "no_api_key"
-
-        # Version from package metadata
-        try:
-            from importlib.metadata import version as _pkg_version
-            _version = _pkg_version("codevault")
-        except Exception:
-            _version = "unknown"
-
-        overall = "ok" if db_status.startswith("connected") else "degraded"
         click.echo(f"{'OK' if overall == 'ok' else 'WARN'}  status: {overall}")
-        click.echo(f"      db: {db_status} ({config.storage.backend})")
+        click.echo(f"      db: {db_display}")
         click.echo(f"      embeddings: {embed_status} ({config.embedding.provider}/{config.embedding.model})")
         click.echo(f"      version: {_version}")
         if overall != "ok":
@@ -1029,55 +1013,12 @@ def mcp(transport, port, host):
     def _build_health_response(config) -> tuple[dict, int]:
         """Build health check JSON and HTTP status code."""
         import time as _t
+        from memory.health import check_health
+
         uptime = int(_t.monotonic() - _server_start_time)
-        db_status = "connected"
-        http_status = 200
-        if config.storage.backend == "postgresql":
-            conn = None
-            try:
-                import psycopg2
-                conn = psycopg2.connect(config.storage.url)
-                cur = conn.cursor()
-                cur.execute("SELECT 1")
-                cur.close()
-            except Exception as e:
-                click.echo(f"[HEALTH] DB check failed: {e}")
-                db_status = "error"
-                http_status = 503
-            finally:
-                if conn is not None:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-        else:
-            # SQLite — always ok if we got this far
-            db_status = "connected"
-
-        # W1: Check embedding provider configuration
-        embed_status = "configured"
-        if not config.embedding.provider:
-            embed_status = "not_configured"
-        elif config.embedding.provider == "openai" and not config.embedding.api_key:
-            # Check env var fallback
-            import os as _os
-            if not _os.environ.get("OPENAI_API_KEY"):
-                embed_status = "no_api_key"
-
-        # W4: Version from package metadata instead of hardcoded
-        try:
-            from importlib.metadata import version as _pkg_version
-            _version = _pkg_version("codevault")
-        except Exception:
-            _version = "unknown"
-
-        body = {
-            "status": "ok" if http_status == 200 else "degraded",
-            "db": db_status,
-            "embeddings": embed_status,
-            "version": _version,
-            "uptime_seconds": uptime,
-        }
+        body = check_health(config)
+        body["uptime_seconds"] = uptime
+        http_status = 200 if body["status"] == "ok" else 503
         return body, http_status
 
     if transport == "stdio":

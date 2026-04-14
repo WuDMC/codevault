@@ -369,69 +369,11 @@ def handle_memory_project_list(service: MemoryService) -> str:
 
 def handle_memory_health(service: MemoryService) -> str:
     """Handle memory_health tool call. Returns JSON string with server health."""
-    import importlib.metadata
+    from memory.health import check_health
 
-    # Check DB connection
-    db_status = "connected"
-    try:
-        if hasattr(service, "db") and service.db is not None:
-            conn = getattr(service.db, "conn", None)
-            if conn is not None:
-                cur = conn.cursor()
-                cur.execute("SELECT 1")
-                cur.fetchone()
-                cur.close()
-            else:
-                # PG backend uses pool; try a simple query
-                pool = getattr(service.db, "pool", None)
-                if pool is not None:
-                    pg_conn = pool.getconn()
-                    try:
-                        cur = pg_conn.cursor()
-                        cur.execute("SELECT 1")
-                        cur.fetchone()
-                        cur.close()
-                    finally:
-                        pool.putconn(pg_conn)
-                else:
-                    db_status = "error"
-        else:
-            db_status = "error"
-    except Exception as e:
-        import sys
-        print(f"[HEALTH] DB check failed: {e}", file=sys.stderr)
-        db_status = "error"
-
-    # Check embedding configuration
-    embed_status = "not_configured"
-    try:
-        provider = service.config.embedding.provider
-        if provider:
-            if provider == "openai":
-                api_key = service.config.embedding.api_key or os.environ.get("OPENAI_API_KEY")
-                if not api_key:
-                    embed_status = "no_api_key"
-                else:
-                    embed_status = "configured"
-            else:
-                embed_status = "configured"
-    except Exception:
-        embed_status = "not_configured"
-
-    # Get version
-    try:
-        version = importlib.metadata.version("codevault")
-    except Exception:
-        version = "unknown"
-
-    status = "ok" if db_status == "connected" else "degraded"
-
-    return json.dumps({
-        "status": status,
-        "db": db_status,
-        "embeddings": embed_status,
-        "version": version,
-    })
+    db = getattr(service, "db", None)
+    result = check_health(service.config, db=db)
+    return json.dumps(result)
 
 
 def create_mcp_server(service: MemoryService) -> Server:
