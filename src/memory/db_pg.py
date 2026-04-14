@@ -247,6 +247,19 @@ class MemoryDBPostgres:
             ON epics (user_id, project, status)
         """)
 
+        # Migration: add notes column to epics if missing
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='epics' AND column_name='notes'
+                ) THEN
+                    ALTER TABLE epics ADD COLUMN notes TEXT DEFAULT '';
+                END IF;
+            END $$;
+        """)
+
         # Migration: add epic_id to memories if missing
         cursor.execute("""
             DO $$
@@ -1028,6 +1041,7 @@ class MemoryDBPostgres:
         title: str,
         ticket: str | None = None,
         description: str = "",
+        notes: str = "",
     ) -> dict:
         """Create an epic."""
         if not self.user_id:
@@ -1036,11 +1050,11 @@ class MemoryDBPostgres:
         try:
             cursor.execute(
                 """
-                INSERT INTO epics (user_id, project, ticket, title, description)
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING id, project, ticket, title, description, status, created_at, updated_at
+                INSERT INTO epics (user_id, project, ticket, title, description, notes)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, project, ticket, title, description, notes, status, created_at, updated_at
                 """,
-                (self.user_id, project, ticket, title, description),
+                (self.user_id, project, ticket, title, description, notes),
             )
             row = cursor.fetchone()
             self.conn.commit()
@@ -1057,7 +1071,7 @@ class MemoryDBPostgres:
         try:
             cursor.execute(
                 """
-                SELECT id, project, ticket, title, description, status, created_at, updated_at
+                SELECT id, project, ticket, title, description, notes, status, created_at, updated_at
                 FROM epics
                 WHERE user_id = %s AND id = %s
                 """,
@@ -1081,7 +1095,7 @@ class MemoryDBPostgres:
             if project:
                 cursor.execute(
                     """
-                    SELECT id, project, ticket, title, description, status, created_at, updated_at
+                    SELECT id, project, ticket, title, description, notes, status, created_at, updated_at
                     FROM epics
                     WHERE user_id = %s AND ticket = %s AND project = %s
                     """,
@@ -1090,7 +1104,7 @@ class MemoryDBPostgres:
             else:
                 cursor.execute(
                     """
-                    SELECT id, project, ticket, title, description, status, created_at, updated_at
+                    SELECT id, project, ticket, title, description, notes, status, created_at, updated_at
                     FROM epics
                     WHERE user_id = %s AND ticket = %s
                     ORDER BY updated_at DESC
@@ -1128,7 +1142,7 @@ class MemoryDBPostgres:
 
             cursor.execute(
                 f"""
-                SELECT id, project, ticket, title, description, status, created_at, updated_at
+                SELECT id, project, ticket, title, description, notes, status, created_at, updated_at
                 FROM epics
                 WHERE {' AND '.join(conditions)}
                 ORDER BY updated_at DESC
@@ -1149,6 +1163,7 @@ class MemoryDBPostgres:
         title: str | None = None,
         description: str | None = None,
         ticket: str | None = None,
+        notes: str | None = None,
     ) -> dict | None:
         """Update an epic. Returns updated row or None if not found."""
         if not self.user_id:
@@ -1172,11 +1187,14 @@ class MemoryDBPostgres:
             if ticket is not None:
                 sets.append("ticket = %s")
                 params.append(ticket)
+            if notes is not None:
+                sets.append("notes = %s")
+                params.append(notes)
 
             params.extend([self.user_id, epic_id])
             cursor.execute(
                 f"UPDATE epics SET {', '.join(sets)} WHERE user_id = %s AND id = %s "
-                "RETURNING id, project, ticket, title, description, status, created_at, updated_at",
+                "RETURNING id, project, ticket, title, description, notes, status, created_at, updated_at",
                 params,
             )
             row = cursor.fetchone()

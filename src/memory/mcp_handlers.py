@@ -292,10 +292,11 @@ def handle_memory_epic_add(
     title: str,
     ticket: Optional[str] = None,
     description: str = "",
+    notes: Optional[str] = "",
 ) -> str:
     """Handle memory_epic_add tool call."""
     project = project or os.path.basename(os.getcwd())
-    result = service.add_epic(project, title, ticket, description)
+    result = service.add_epic(project, title, ticket, description, notes or "")
     return json.dumps(result)
 
 
@@ -340,9 +341,10 @@ def handle_memory_epic_update(
     title: Optional[str] = None,
     description: Optional[str] = None,
     ticket: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> str:
     """Handle memory_epic_update tool call."""
-    result = service.update_epic(epic_id, status, title, description, ticket)
+    result = service.update_epic(epic_id, status, title, description, ticket, notes)
     if result is None:
         return json.dumps({"error": f"Epic {epic_id} not found"})
     return json.dumps(result)
@@ -536,6 +538,7 @@ def create_mcp_server(service: MemoryService) -> Server:
                         "title": {"type": "string", "description": "Epic title."},
                         "ticket": {"type": "string", "description": "Ticket reference (e.g. 'AUTH-123'). Optional."},
                         "description": {"type": "string", "description": "Markdown checklist of steps. e.g. '- [ ] step 1\\n- [ ] step 2'"},
+                        "notes": {"type": "string", "description": "Freeform notes — agent findings, reviewer comments, discussion. Keeps checklist clean."},
                     },
                     "required": ["title"],
                 },
@@ -585,6 +588,7 @@ def create_mcp_server(service: MemoryService) -> Server:
                         "title": {"type": "string", "description": "Updated title."},
                         "description": {"type": "string", "description": "Full Markdown checklist (replaces existing)."},
                         "ticket": {"type": "string", "description": "Updated ticket reference."},
+                        "notes": {"type": "string", "description": "Freeform notes — agent findings, reviewer comments, discussion. Keeps checklist clean."},
                     },
                     "required": ["epic_id"],
                 },

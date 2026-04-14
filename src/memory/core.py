@@ -607,11 +607,12 @@ class MemoryService:
         title: str,
         ticket: str | None = None,
         description: str = "",
+        notes: str = "",
     ) -> dict:
         """Create an epic."""
         if not hasattr(self.db, "add_epic"):
             raise NotImplementedError("Epics require PostgreSQL backend")
-        return self.db.add_epic(project, title, ticket, description)
+        return self.db.add_epic(project, title, ticket, description, notes)
 
     def get_epic(self, epic_id: int) -> dict | None:
         """Get an epic by ID."""
@@ -642,11 +643,12 @@ class MemoryService:
         title: str | None = None,
         description: str | None = None,
         ticket: str | None = None,
+        notes: str | None = None,
     ) -> dict | None:
         """Update an epic."""
         if not hasattr(self.db, "update_epic"):
             raise NotImplementedError("Epics require PostgreSQL backend")
-        return self.db.update_epic(epic_id, status, title, description, ticket)
+        return self.db.update_epic(epic_id, status, title, description, ticket, notes)
 
     def ensure_backlog_epic(self, project: str) -> dict:
         """Ensure a Backlog epic exists for a project. Returns it."""
